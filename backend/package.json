@@ -1,13 +1,22 @@
 {
-    "name":"backend",
-    "version":"0.1.0",
-    "description":"recall local backend daemon",
-    "main":"src/server.js",
-    "scripts":{
-        "start":"node src/server.js",
-        "dev":"node --watch src/server.js"
-    },
-    "dependencies":{
-        "express":"^4.21.0"
-    }
+  "name": "backend",
+  "version": "0.2.0",
+  "description": "recall local backend daemon",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node src/migrate.js",
+    "inspect-db": "node scripts/inspect-db.js",
+    "test:phase1": "node scripts/test-phase1.js",
+    "test:classify": "node scripts/test-classify.js",
+    "test:phase2": "node scripts/test-phase2.js"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0",
+    "better-sqlite3": "^11.7.0",
+    "cheerio": "^1.0.0",
+    "express": "^4.21.0",
+    "jsdom": "^25.0.1"
+  }
 }
