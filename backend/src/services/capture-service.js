@@ -1,6 +1,5 @@
 const config = require('../config');
 const itemsDb = require('../db/items');
-const chromaDb = require('../db/chroma');
 const { classifyUrl } = require('../pipeline/classify');
 
 function normalizeCapturePayload(body) {
@@ -88,17 +87,6 @@ function createCapture(body, queue) {
   checkDuplicate(payload.url, queue);
 
   const item = itemsDb.createItem(payload);
-
-  chromaDb.upsertPlaceholder(
-    item.id,
-    {
-      source_type: item.source_type,
-      domain: item.domain,
-      created_at: item.created_at,
-      save_mode: item.save_mode,
-    },
-    item.summary || item.note || item.title || item.url
-  );
 
   queue.addJob({ itemId: item.id, url: item.url });
 

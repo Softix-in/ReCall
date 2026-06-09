@@ -120,6 +120,122 @@ function findRecentByUrl(url, sinceMs) {
   return rowToItem(row);
 }
 
+function getItemsByIds(ids) {
+  if (!ids?.length) {
+    return [];
+  }
+
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = getDb().prepare(`
+    SELECT * FROM items WHERE id IN (${placeholders})
+  `).all(...ids);
+
+  const byId = new Map(rows.map((row) => [row.id, rowToItem(row)]));
+  return ids.map((id) => byId.get(id)).filter(Boolean);
+}
+
+function buildFtsQuery(query) {
+  const phraseMatch = query.match(/"([^"]+)"/);
+  if (phraseMatch) {
+    return `"${phraseMatch[1].replace(/"/g, '""')}"`;
+  }
+
+  const terms = query.trim().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) {
+    return '""';
+  }
+
+  return terms
+    .map((term) => `"${term.replace(/"/g, '""')}"`)
+    .join(' AND ');
+}
+
+function searchFts(query, limit = 20) {
+  const ftsQuery = buildFtsQuery(query);
+  const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+
+  const rows = getDb().prepare(`
+    SELECT
+      items.id AS id,
+      bm25(items_fts) AS rank
+    FROM items_fts
+    JOIN items ON items.rowid = items_fts.rowid
+    WHERE items_fts MATCH @query
+      AND items.processing = 'done'
+    ORDER BY rank ASC
+    LIMIT @limit
+  `).all({ query: ftsQuery, limit: safeLimit });
+
+  return rows.map((row) => ({
+    id: row.id,
+    score: 1 / (1 + Math.abs(row.rank ?? 0)),
+  }));
+}
+
+function listFailedItems({ limit = 20 } = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+
+  const rows = getDb().prepare(`
+    SELECT * FROM items
+    WHERE processing = 'failed'
+    ORDER BY processed_at DESC, created_at DESC
+    LIMIT ?
+  `).all(safeLimit);
+
+  return rows.map(rowToItem);
+}
+
+function listJobHistory({ days = 30, limit = 100 } = {}) {
+  const safeDays = Math.min(Math.max(Number(days) || 30, 1), 90);
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  const sinceMs = Date.now() - safeDays * 24 * 60 * 60 * 1000;
+
+  const rows = getDb().prepare(`
+    SELECT * FROM items
+    WHERE created_at >= ?
+      AND processing IN ('done', 'failed', 'queued', 'processing')
+    ORDER BY COALESCE(processed_at, created_at) DESC
+    LIMIT ?
+  `).all(sinceMs, safeLimit);
+
+  return rows.map(rowToItem);
+}
+
+function listStuckItems() {
+  const rows = getDb().prepare(`
+    SELECT * FROM items
+    WHERE processing IN ('queued', 'processing')
+    ORDER BY created_at ASC
+  `).all();
+
+  return rows.map(rowToItem);
+}
+
+function getLastSavedItem() {
+  const row = getDb().prepare(`
+    SELECT * FROM items
+    WHERE processing = 'done'
+    ORDER BY processed_at DESC
+    LIMIT 1
+  `).get();
+
+  return rowToItem(row);
+}
+
+function listDoneItems({ limit = 1000, offset = 0 } = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 1000, 1), 10_000);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+
+  const rows = getDb().prepare(`
+    SELECT * FROM items
+    WHERE processing = 'done'
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(safeLimit, safeOffset);
+
+  return rows.map(rowToItem);
+}
+
 module.exports = {
   createItem,
   getItemById,
@@ -127,4 +243,11 @@ module.exports = {
   listItems,
   countItems,
   findRecentByUrl,
+  getItemsByIds,
+  searchFts,
+  listDoneItems,
+  listFailedItems,
+  listJobHistory,
+  listStuckItems,
+  getLastSavedItem,
 };

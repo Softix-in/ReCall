@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Recall Settings</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header>
+        <h1>Recall Settings</h1>
+        <p>Stored locally in <code>~/.recall/settings.json</code></p>
+      </header>
+
+      <form id="settings-form">
+        <label>
+          Whisper model size
+          <select id="whisperModel">
+            <option value="tiny">Tiny (fastest)</option>
+            <option value="small">Small (default)</option>
+            <option value="medium">Medium (best quality)</option>
+          </select>
+        </label>
+
+        <label>
+          Default save mode
+          <select id="defaultSaveMode">
+            <option value="auto_scrape">Auto-scrape</option>
+            <option value="manual_note">Write a note</option>
+          </select>
+        </label>
+
+        <label>
+          Max transcript length (characters)
+          <input type="number" id="maxTranscriptLength" min="1000" max="500000" step="1000" />
+        </label>
+
+        <label>
+          Backup folder path
+          <input type="text" id="backupDir" />
+        </label>
+
+        <label class="checkbox">
+          <input type="checkbox" id="backupEnabled" />
+          Enable nightly backups
+        </label>
+
+        <label>
+          Backup retention (days)
+          <input type="number" id="backupRetentionDays" min="1" max="30" />
+        </label>
+
+        <fieldset>
+          <legend>Keyboard shortcuts</legend>
+          <p class="hint">Configured in <code>chrome://extensions/shortcuts</code></p>
+          <ul>
+            <li><strong>Quick save:</strong> Ctrl+Shift+S (Cmd+Shift+S on Mac)</li>
+            <li><strong>Open search:</strong> Ctrl+Shift+F (Cmd+Shift+F on Mac)</li>
+          </ul>
+        </fieldset>
+
+        <div class="actions">
+          <button type="submit" class="btn-primary">Save settings</button>
+          <span id="status" class="status"></span>
+        </div>
+      </form>
+    </main>
+
+    <script type="module" src="settings.js"></script>
+  </body>
+</html>

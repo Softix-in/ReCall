@@ -4,7 +4,8 @@ const { classifyUrl } = require('../pipeline/classify');
 const { fetchBySourceType } = require('../pipeline/fetch-content');
 const { fetchOgMetadata } = require('../pipeline/fetch-og');
 const { summariseText, summariseManualNote } = require('../pipeline/summarise');
-const { logJob } = require('../utils/logger');
+const { logJob, logDaemon } = require('../utils/logger');
+const { getSettings } = require('../services/settings-service');
 
 function parseCaptureMeta(item) {
   if (!item.capture_meta) {
@@ -82,9 +83,21 @@ async function processItem(itemId) {
   logJob(`[${itemId}] processing started (${item.save_mode})`);
 
   try {
-    const result = item.save_mode === 'manual_note'
+    let result = item.save_mode === 'manual_note'
       ? await processManualNote(item)
       : await processAutoScrape(item);
+
+    const settings = getSettings();
+
+    if (result.content && result.content.length > settings.maxTranscriptLength) {
+      result = {
+        ...result,
+        content: `${result.content.slice(0, settings.maxTranscriptLength)}…`,
+      };
+    }
+
+    const mergedItem = { ...item, ...result };
+    await chromaDb.upsertItemVector(mergedItem);
 
     const updated = itemsDb.updateItem(itemId, {
       ...result,
@@ -93,21 +106,11 @@ async function processItem(itemId) {
       error_message: null,
     });
 
-    chromaDb.upsertPlaceholder(
-      itemId,
-      {
-        source_type: updated.source_type,
-        domain: updated.domain,
-        created_at: updated.created_at,
-        save_mode: updated.save_mode,
-      },
-      updated.summary || updated.note || updated.title || updated.url
-    );
-
     logJob(`[${itemId}] processing done — "${updated.title}"`);
     return updated;
   } catch (error) {
     logJob(`[${itemId}] processing failed — ${error.message}`);
+    logDaemon('error', `Pipeline failed for item ${itemId}`, error);
     throw error;
   }
 }

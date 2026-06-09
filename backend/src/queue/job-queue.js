@@ -8,11 +8,25 @@ class JobQueue {
     this.running = false;
     this.currentJob = null;
     this.shuttingDown = false;
+    this.paused = false;
     this.inFlightUrls = new Set();
   }
 
   getQueueLength() {
     return this.queue.length + (this.currentJob ? 1 : 0);
+  }
+
+  isPaused() {
+    return this.paused;
+  }
+
+  pause() {
+    this.paused = true;
+  }
+
+  resume() {
+    this.paused = false;
+    this.processNext();
   }
 
   isUrlInFlight(url) {
@@ -35,7 +49,7 @@ class JobQueue {
   }
 
   async processNext() {
-    if (this.running || this.queue.length === 0) {
+    if (this.paused || this.running || this.queue.length === 0) {
       return;
     }
 

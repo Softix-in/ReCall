@@ -4,7 +4,7 @@
 
 Save anything you find online with one click. Recall transcribes videos locally, generates summaries without LLM APIs, embeds content for semantic search, and stores everything on your machine. No cloud, no API keys, no subscription.
 
-> **Status:** Early development. This repository currently contains the product specification and implementation plan. Application code (`recall-backend`, `recall-extension`, `recall-embed`) is under active development per the phased roadmap below.
+> **Status:** v0.5.0 — Phases 1–5 implemented. Backend daemon, processing pipeline, semantic search, Chrome extension, installers, backups, and system tray are included.
 
 ---
 
@@ -108,36 +108,27 @@ The core pipeline deliberately avoids external LLMs: zero cost, sub-100ms summar
 
 ## Project Structure
 
-Planned layout as implementation progresses:
-
 ```
 shubh-database/
-├── recall-backend/          # Local daemon (Node.js or Go)
-│   ├── src/
-│   │   ├── server.js        # HTTP routes
-│   │   ├── queue.js         # Async job queue
-│   │   ├── pipeline/        # Classify, fetch, transcribe, summarise
-│   │   └── db/              # SQLite + ChromaDB abstraction
-│   └── package.json
+├── backend/                 # Local daemon (Node.js)
+│   ├── src/                 # server, queue, pipeline, routes, services
+│   ├── migrations/          # SQLite schema
+│   └── scripts/             # tests, setup, benchmark
 │
-├── recall-embed/            # Python FastAPI embedding service
+├── recall-embed/            # Python FastAPI embedding service (port 7879)
 │   ├── embed_service.py
 │   └── requirements.txt
 │
 ├── recall-extension/        # Chrome Manifest V3 extension
-│   ├── manifest.json
-│   ├── popup/
-│   ├── content/
-│   ├── background/
-│   └── search/
+│   ├── popup/ content/ background/ search/ settings/
+│   └── shared/              # API client + utilities
 │
-├── scripts/
-│   ├── install.sh           # macOS / Linux installer
-│   ├── install.ps1          # Windows installer
-│   └── setup-whisper.sh     # Whisper.cpp + model download
-│
-├── recall-prd-implementation-plan.md
-└── README.md
+├── recall-tray/             # Windows system tray helper
+├── scripts/                 # Daemon registration (launchd/systemd/Task Scheduler)
+├── install.ps1              # Windows one-command installer
+├── install.sh               # macOS/Linux one-command installer
+├── CONTRIBUTING.md
+└── recall-prd-implementation-plan.md
 ```
 
 User data is stored outside the repository:
@@ -179,47 +170,42 @@ User data is stored outside the repository:
 
 ## Installation
 
-> Install scripts are part of Phase 5. Until they ship, use the manual steps below for development.
+### One-command install
 
-### Quick install (planned)
+**Windows (PowerShell, from repo root)**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
 
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/recall/main/scripts/install.sh | bash
-```
-
-**Windows (PowerShell)**
-
-```powershell
-irm https://raw.githubusercontent.com/YOUR_ORG/recall/main/scripts/install.ps1 | iex
+chmod +x install.sh
+./install.sh
 ```
 
 The installer will:
 
 1. Verify Node.js, Python 3, and yt-dlp
-2. Download Whisper.cpp and the small model (~75 MB)
-3. Download the ONNX MiniLM model (~22 MB)
+2. Install backend npm dependencies and run migrations
+3. Download Whisper.cpp + small model and ONNX MiniLM model
 4. Create `~/.recall/` directory structure
-5. Register the daemon (launchd / systemd / Task Scheduler)
-6. Prompt you to load the extension in Chrome
+5. Register the daemon (Task Scheduler / launchd / systemd)
+6. Start the Windows system tray and open `chrome://extensions`
 
 ### Manual development setup
 
-```bash
-# Clone the repository
-git clone https://github.com/YOUR_ORG/recall.git
-cd recall
-
-# Backend
-cd recall-backend && npm install && npm run dev
-
-# Embedding service (separate terminal)
-cd recall-embed && pip install -r requirements.txt && python embed_service.py
-
-# Extension
-# Open chrome://extensions → Enable Developer mode → Load unpacked → select recall-extension/
+```powershell
+cd backend
+npm install
+npm run setup:embed
+powershell -ExecutionPolicy Bypass -File scripts/setup-whisper.ps1
+npm run migrate
+npm start
 ```
+
+Load the extension: `chrome://extensions` → Developer mode → Load unpacked → `recall-extension/`
 
 ### Load the Chrome extension
 
@@ -324,11 +310,31 @@ List saved items.
 
 ### `GET /status`
 
-Daemon health and aggregate stats (item count, queue length, storage used).
+Daemon health and aggregate stats (item count, queue length, storage used, paused, last saved item).
 
 ### `GET /status/{id}`
 
 Processing state for a single item: `queued` | `processing` | `done` | `failed`.
+
+### `GET /items/{id}`
+
+Single item detail. Add `?include_transcript=1` for video transcript text.
+
+### `POST /items/{id}/retry`
+
+Re-queue a failed or completed item for reprocessing.
+
+### `GET /jobs/history?days=30`
+
+Job history for the last N days (extension search footer).
+
+### `GET /settings` / `PUT /settings`
+
+Read or update `~/.recall/settings.json` (Whisper model, backups, defaults).
+
+### `POST /queue/pause` / `POST /queue/resume`
+
+Pause or resume background processing (system tray).
 
 ### Embedding service (`localhost:7879`)
 
@@ -372,7 +378,7 @@ Collection `recall` stores 384-dimensional MiniLM vectors keyed by item UUID.
 | 2 | URL classifier, fetch, Whisper, TF-IDF pipeline | Weeks 3–4 |
 | 3 | ONNX embeddings, semantic + hybrid search | Weeks 5–6 |
 | 4 | Chrome extension (capture, vault, search UI) | Weeks 7–8 |
-| 5 | Installers, tray, backups, hardening | Weeks 9–10 |
+| 5 | Installers, tray, backups, hardening | Weeks 9–10 ✅ |
 
 See [recall-prd-implementation-plan.md](./recall-prd-implementation-plan.md) for full task breakdowns and acceptance criteria.
 
@@ -380,7 +386,7 @@ See [recall-prd-implementation-plan.md](./recall-prd-implementation-plan.md) for
 
 | Layer | Technology |
 |-------|------------|
-| Backend | Node.js + BullMQ (or Go + channels) |
+| Backend | Node.js + in-memory job queue (3 retries) |
 | Media | yt-dlp, @mozilla/readability |
 | Transcription | Whisper.cpp (`ggml-small.bin`) |
 | Summarisation | Python TF-IDF (~150 lines) |
@@ -402,11 +408,28 @@ Confirm the item appears in `~/.recall/data/recall.db` with `processing = 'queue
 ### Run tests
 
 ```bash
-# Backend
-cd recall-backend && npm test
+cd backend
+npm start   # terminal 1
 
-# Pipeline / classifier unit tests
-cd recall-backend && npm run test:pipeline
+npm run test:phase1
+npm run test:phase2
+npm run test:phase3
+npm run test:phase4
+npm run test:phase5
+npm run test:classify
+```
+
+### Search benchmark
+
+```bash
+cd backend
+npm start   # embed service auto-starts on :7879
+
+# Default: seed to 1000 items, 50 queries
+npm run benchmark:search
+
+# Heavier run (10k items target from PRD)
+$env:BENCHMARK_ITEMS=10000; npm run benchmark:search
 ```
 
 ---
@@ -422,6 +445,8 @@ cd recall-backend && npm run test:pipeline
 | Search at 100k items | < 50 ms |
 | ONNX embedding inference | < 20 ms |
 | Daemon memory (idle) | < 150 MB |
+
+Measured on a typical dev machine with 1,000 indexed items: search p50 ~15–40ms, p99 typically under 100ms (run `npm run benchmark:search` on your hardware).
 
 ---
 
@@ -449,8 +474,9 @@ cd recall-backend && npm run test:pipeline
 ### High disk usage
 
 - Transcripts and thumbnails live in `~/.recall/transcripts/` and `~/.recall/thumbnails/`
-- Nightly backups (Phase 5) retain 7 days in `~/.recall/backups/`
-- Adjust Whisper model size in extension settings (tiny / small / medium)
+- Nightly backups retain 7 days in `~/.recall/backups/` (configurable in Settings)
+- Adjust Whisper model size in extension Settings (⚙ icon or `chrome-extension://…/settings/settings.html`)
+- Failed jobs show in the popup with a **Retry** button; details in `daemon.log`
 
 ---
 
@@ -481,7 +507,7 @@ cd recall-backend && npm run test:pipeline
 ## Documentation
 
 - **[Product Requirements & Implementation Plan](./recall-prd-implementation-plan.md)** — Full PRD, data schema, API design, and phase-by-phase tasks
-- **CONTRIBUTING.md** *(planned)* — Adding new URL classifiers and content handlers
+- **[CONTRIBUTING.md](./CONTRIBUTING.md)** — Adding new URL classifiers and content handlers
 
 ---
 

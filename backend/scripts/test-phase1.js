@@ -75,21 +75,10 @@ async function main() {
     throw new Error('Item missing from SQLite');
   }
 
-  const chromaVector = chromaDb.getVector(id);
-
-  if (!chromaVector) {
-    throw new Error('Item missing from Chroma vector store');
-  }
-
   console.log('SQLite row:', {
     id: sqliteItem.id,
     processing: sqliteItem.processing,
     url: sqliteItem.url,
-  });
-
-  console.log('Chroma vector:', {
-    id: chromaVector.id,
-    document: chromaVector.document,
   });
 
   console.log('Polling /status/:id until done...');
@@ -110,6 +99,14 @@ async function main() {
   if (finalStatus !== 'done') {
     throw new Error(`Expected processing=done, got ${finalStatus}`);
   }
+
+  const chromaVector = await chromaDb.getVector(id);
+
+  if (!chromaVector?.embedding?.length) {
+    throw new Error('Item missing from vector store after pipeline completed');
+  }
+
+  console.log('Vector document:', chromaVector.document?.slice(0, 80));
 
   const list = await request('GET', '/items?limit=5');
   const aggregate = await request('GET', '/status');

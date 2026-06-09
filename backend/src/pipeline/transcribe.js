@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const { runCommand } = require('../utils/subprocess');
+const { getSettings } = require('../services/settings-service');
 
 function whisperBinaryPath() {
   const win = path.join(config.WHISPER_DIR, 'whisper-cli.exe');
@@ -18,10 +19,15 @@ function whisperBinaryPath() {
 }
 
 function whisperModelPath() {
+  const settings = getSettings();
+  const preferred = path.join(config.WHISPER_DIR, `ggml-${settings.whisperModel}.bin`);
+
   const candidates = [
+    preferred,
     path.join(config.WHISPER_DIR, 'ggml-small.bin'),
     path.join(config.WHISPER_DIR, 'ggml-base.bin'),
     path.join(config.WHISPER_DIR, 'ggml-tiny.bin'),
+    path.join(config.WHISPER_DIR, 'ggml-medium.bin'),
   ];
 
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;

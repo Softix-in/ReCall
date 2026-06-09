@@ -1,115 +1,50 @@
-const fs = require('fs');
-const path = require('path');
-const config = require('../config');
+/**
+ * Vector store facade — delegates to embed service (ChromaDB + HNSW).
+ */
 
-const STORE_PATH = path.join(config.CHROMA_DIR, 'recall-vectors.json');
+const embedClient = require('../services/embed-client');
+const embeddingService = require('../services/embedding-service');
+
 const COLLECTION_NAME = 'recall';
 
-let store = null;
+async function upsertVector(id, embedding, metadata = {}, document = '') {
+  return embedClient.upsertVector(id, embedding, metadata, document);
+}
 
-function loadStore() {
-  if (store) {
-    return store;
+async function upsertItemVector(item) {
+  return embeddingService.embedAndStoreItem(item);
+}
+
+async function getVector(id) {
+  try {
+    return await embedClient.getVector(id);
+  } catch (error) {
+    if (error.status === 404) {
+      return null;
+    }
+    throw error;
   }
-
-  if (fs.existsSync(STORE_PATH)) {
-    store = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
-  } else {
-    store = {
-      collection: COLLECTION_NAME,
-      vectors: {},
-    };
-  }
-
-  return store;
 }
 
-function saveStore() {
-  fs.mkdirSync(config.CHROMA_DIR, { recursive: true });
-  fs.writeFileSync(STORE_PATH, JSON.stringify(store, null, 2));
+async function hasVector(id) {
+  const vector = await getVector(id);
+  return Boolean(vector);
 }
 
-function placeholderEmbedding(seed = '') {
-  const vector = new Array(config.EMBEDDING_DIM).fill(0);
-  const text = seed || 'placeholder';
-
-  for (let i = 0; i < text.length; i += 1) {
-    const index = i % config.EMBEDDING_DIM;
-    vector[index] += text.charCodeAt(i) / 1000;
-  }
-
-  return vector;
+async function queryVectors(embedding, n = 20) {
+  return embedClient.queryVectors(embedding, n);
 }
 
-function cosineSimilarity(a, b) {
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-
-  for (let i = 0; i < a.length; i += 1) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-
-  if (normA === 0 || normB === 0) {
-    return 0;
-  }
-
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-function upsertVector(id, embedding, metadata = {}, document = '') {
-  loadStore();
-
-  store.vectors[id] = {
-    id,
-    embedding,
-    metadata,
-    document,
-    updated_at: Date.now(),
-  };
-
-  saveStore();
-}
-
-function getVector(id) {
-  loadStore();
-  return store.vectors[id] ?? null;
-}
-
-function hasVector(id) {
-  return Boolean(getVector(id));
-}
-
-function queryVectors(embedding, n = 5) {
-  loadStore();
-
-  const results = Object.values(store.vectors)
-    .map((entry) => ({
-      id: entry.id,
-      score: cosineSimilarity(embedding, entry.embedding),
-      metadata: entry.metadata,
-      document: entry.document,
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, n);
-
-  return results;
-}
-
-function upsertPlaceholder(id, metadata = {}, document = '') {
-  const embedding = placeholderEmbedding(document || id);
-  upsertVector(id, embedding, metadata, document);
-  return embedding;
+async function deleteVector(id) {
+  return embedClient.deleteVector(id);
 }
 
 module.exports = {
   COLLECTION_NAME,
   upsertVector,
-  upsertPlaceholder,
+  upsertItemVector,
   getVector,
   hasVector,
   queryVectors,
-  placeholderEmbedding,
+  deleteVector,
 };

@@ -4,10 +4,12 @@ const config = require('./config');
 const DIRECTORIES = [
   config.DATA_DIR,
   config.CHROMA_DIR,
+  config.MODELS_DIR,
   config.TRANSCRIPTS_DIR,
   config.THUMBNAILS_DIR,
   config.LOGS_DIR,
   config.WHISPER_DIR,
+  config.BACKUPS_DIR,
 ];
 
 function ensureRecallDirs() {

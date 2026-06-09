@@ -1,10 +1,10 @@
 const express = require('express');
-const chromaDb = require('../db/chroma');
-const itemsDb = require('../db/items');
+const searchService = require('../services/search-service');
+const { EmbedClientError } = require('../services/embed-client');
 
 const router = express.Router();
 
-router.get('/search', (req, res) => {
+router.get('/search', async (req, res) => {
   const query = (req.query.q || '').trim();
 
   if (!query) {
@@ -12,46 +12,31 @@ router.get('/search', (req, res) => {
     return;
   }
 
-  const vectorResults = chromaDb.queryVectors(
-    chromaDb.placeholderEmbedding(query),
-    20
-  );
+  try {
+    const result = await searchService.search(query, {
+      type: req.query.type,
+      mode: req.query.mode,
+      since: req.query.since,
+    });
 
-  const results = vectorResults
-    .map((match) => {
-      const item = itemsDb.getItemById(match.id);
-      if (!item) {
-        return null;
-      }
+    res.json(result);
+  } catch (error) {
+    if (error.status === 400) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
 
-      if (req.query.type && item.source_type !== req.query.type) {
-        return null;
-      }
+    if (error instanceof EmbedClientError) {
+      res.status(503).json({
+        error: 'Embedding service unavailable',
+        detail: error.message,
+      });
+      return;
+    }
 
-      if (req.query.mode && item.save_mode !== req.query.mode) {
-        return null;
-      }
-
-      if (req.query.since) {
-        const sinceMs = Date.parse(req.query.since);
-        if (!Number.isNaN(sinceMs) && item.created_at < sinceMs) {
-          return null;
-        }
-      }
-
-      return {
-        ...item,
-        score: match.score,
-      };
-    })
-    .filter(Boolean)
-    .slice(0, 10);
-
-  res.json({
-    query,
-    results,
-    note: 'Phase 1 placeholder search — real semantic search arrives in Phase 3',
-  });
+    console.error('Search failed:', error);
+    res.status(500).json({ error: 'Search failed', detail: error.message });
+  }
 });
 
 module.exports = router;

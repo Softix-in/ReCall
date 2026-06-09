@@ -6,11 +6,17 @@ function createStatusRouter(queue) {
   const router = express.Router();
 
   router.get('/status', (req, res) => {
+    const lastSaved = itemsDb.getLastSavedItem();
+
     res.json({
       ok: true,
       itemCount: itemsDb.countItems(),
       queueLength: queue.getQueueLength(),
       storageBytes: getStorageBytes(),
+      paused: queue.isPaused(),
+      lastSaved: lastSaved
+        ? { id: lastSaved.id, title: lastSaved.title, url: lastSaved.url }
+        : null,
     });
   });
 
