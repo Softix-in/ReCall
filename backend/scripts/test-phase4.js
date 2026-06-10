@@ -65,6 +65,7 @@ function checkExtensionFiles() {
     'search/search.css',
     'shared/api.js',
     'shared/utils.js',
+    'icons/logo.svg',
     'icons/icon-16.png',
     'icons/icon-48.png',
     'icons/icon-128.png',

@@ -36,6 +36,17 @@ body {
   margin-bottom: 24px;
 }
 
+.hero-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-logo {
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
 .hero h1 {
   margin: 0 0 6px;
   font-size: 28px;
@@ -93,6 +104,143 @@ body {
   font-size: 13px;
   color: var(--muted);
   margin-bottom: 16px;
+}
+
+.panel-section {
+  margin-bottom: 28px;
+}
+
+.panel-section[hidden] {
+  display: none !important;
+}
+
+.section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.text-btn {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.text-btn:hover {
+  color: #fecaca;
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.delete-btn {
+  align-self: start;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+  color: #fecaca;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.delete-btn:hover {
+  background: rgba(239, 68, 68, 0.18);
+}
+
+.result-actions .delete-btn {
+  margin-left: 0;
+}
+
+.section-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.suggestion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.suggestion-chip {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.suggestion-chip:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.search-card {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  margin-bottom: 10px;
+  transition: border-color 0.15s ease;
+}
+
+.search-card:hover {
+  border-color: var(--accent);
+}
+
+.search-card.compact {
+  padding: 12px;
+}
+
+.search-card-icon {
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.search-card h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.search-card-summary {
+  margin: 0 0 8px;
+  color: #cbd5e1;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.search-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.match-score {
+  color: #a5b4fc;
+  font-weight: 600;
 }
 
 .results {

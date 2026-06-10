@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Recall">
+  <defs>
+    <linearGradient id="recall-bg" x1="8" y1="8" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#recall-bg)"/>
+  <path
+    fill="#ffffff"
+    d="M36 34h30c17 0 28 9.5 28 23.5 0 10.5-6 18.5-15.5 22L92 94H68L49 76V94H34V34h2zm28 37.5c8.5 0 13.5-4.5 13.5-11.5S72.5 48.5 64 48.5H50v23h14z"
+  />
+  <circle cx="94" cy="38" r="6" fill="#c7d2fe" opacity="0.9"/>
+</svg>

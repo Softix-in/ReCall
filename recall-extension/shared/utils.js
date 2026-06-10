@@ -102,6 +102,32 @@ export function isValidHttpUrl(value) {
   }
 }
 
+export function isAutomatedTestJob(job) {
+  const url = job?.url || '';
+
+  if (!url.includes('example.com') && !url.includes('benchmark.recall.local')) {
+    return false;
+  }
+
+  return /phase\d|fail-job-test|recall-phase|benchmark\.recall/i.test(url);
+}
+
+export function friendlyCaptureError(message) {
+  if (!message) {
+    return 'Cannot capture this page';
+  }
+
+  if (message.includes('Receiving end does not exist')) {
+    return 'Refresh the page, then open Recall again.';
+  }
+
+  if (message.includes('Cannot access a chrome:// URL')) {
+    return 'Open a normal website tab first, then open Recall.';
+  }
+
+  return message;
+}
+
 export function truncate(text, max = 120) {
   if (!text) {
     return '';

@@ -1,7 +1,18 @@
-import { getFailedJobs, retryItem, search } from '../shared/api.js';
+import {
+  clearTestData,
+  deleteItem,
+  getFailedJobs,
+  getSearchRecommendations,
+  retryItem,
+  search,
+} from '../shared/api.js';
+import { createLiveSearchRunner } from '../shared/live-search.js';
+import { bindSuggestionChips, renderSuggestionChips } from '../shared/search-render.js';
 import {
   formatBytes,
   formatTimeAgo,
+  friendlyCaptureError,
+  isAutomatedTestJob,
   isValidHttpUrl,
   processingLabel,
   sourceTypeIcon,
@@ -15,7 +26,10 @@ const state = {
   scraped: null,
   vaultMode: 'auto_scrape',
   lastCaptureId: null,
+  recentRequestId: 0,
 };
+
+const recentLiveSearch = createLiveSearchRunner({ debounceMs: 220, minLength: 2 });
 
 function sendMessage(message) {
   return new Promise((resolve) => {
@@ -44,7 +58,7 @@ function setActiveTab(tabName) {
   });
 
   if (tabName === 'recent') {
-    loadRecentItems();
+    scheduleRecentSearch();
   }
 }
 
@@ -101,8 +115,8 @@ async function loadActiveTabScrape() {
   const response = await sendMessage({ type: 'SCRAPE_ACTIVE_TAB' });
 
   if (!response?.ok) {
-    $('#capture-title').textContent = response?.error || 'Cannot capture this page';
-    $('#capture-domain').textContent = '';
+    $('#capture-title').textContent = friendlyCaptureError(response?.error);
+    $('#capture-domain').textContent = 'Use Link Vault to save by URL, or switch to a regular webpage tab.';
     $('#quick-save-btn').disabled = true;
     return;
   }
@@ -123,14 +137,64 @@ async function refreshQueueStatus() {
   updateCaptureStatus(job);
 }
 
+function renderFailedJobRow(job, list) {
+  const row = document.createElement('div');
+  row.className = 'failed-item';
+  row.innerHTML = `
+    <p><strong>${escapeHtml(job.title || job.url)}</strong><br>${escapeHtml(job.error_message || 'Unknown error')}</p>
+  `;
+
+  const actions = document.createElement('div');
+  actions.className = 'failed-actions';
+
+  const retryBtn = document.createElement('button');
+  retryBtn.type = 'button';
+  retryBtn.textContent = 'Retry';
+  retryBtn.addEventListener('click', async () => {
+    retryBtn.disabled = true;
+    try {
+      await retryItem(job.id);
+      showToast('Retry queued');
+      await loadFailedJobs();
+      await refreshQueueStatus();
+    } catch (error) {
+      showToast(error.message, 'error');
+      retryBtn.disabled = false;
+    }
+  });
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.type = 'button';
+  dismissBtn.textContent = 'Dismiss';
+  dismissBtn.addEventListener('click', async () => {
+    dismissBtn.disabled = true;
+    try {
+      await deleteItem(job.id);
+      showToast('Removed');
+      await loadFailedJobs();
+      await refreshFooter();
+    } catch (error) {
+      showToast(error.message, 'error');
+      dismissBtn.disabled = false;
+    }
+  });
+
+  actions.appendChild(retryBtn);
+  actions.appendChild(dismissBtn);
+  row.appendChild(actions);
+  list.appendChild(row);
+}
+
 async function loadFailedJobs() {
   const section = $('#failed-jobs');
   const list = $('#failed-list');
 
   try {
-    const { jobs } = await getFailedJobs(5);
+    const { jobs } = await getFailedJobs(20);
+    const userJobs = (jobs || []).filter((job) => !isAutomatedTestJob(job));
+    const testJobs = (jobs || []).filter((job) => isAutomatedTestJob(job));
 
-    if (!jobs?.length) {
+    if (userJobs.length === 0 && testJobs.length === 0) {
       section.hidden = true;
       return;
     }
@@ -138,31 +202,33 @@ async function loadFailedJobs() {
     section.hidden = false;
     list.innerHTML = '';
 
-    for (const job of jobs) {
-      const row = document.createElement('div');
-      row.className = 'failed-item';
-      row.innerHTML = `
-        <p><strong>${escapeHtml(job.title || job.url)}</strong><br>${escapeHtml(job.error_message || 'Unknown error')}</p>
-      `;
+    if (testJobs.length > 0) {
+      const note = document.createElement('p');
+      note.className = 'failed-hint';
+      note.textContent = `${testJobs.length} failed test run(s) from npm test scripts (example.com URLs). Safe to clear.`;
+      list.appendChild(note);
 
-      const retryBtn = document.createElement('button');
-      retryBtn.type = 'button';
-      retryBtn.textContent = 'Retry';
-      retryBtn.addEventListener('click', async () => {
-        retryBtn.disabled = true;
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.className = 'btn btn-secondary clear-test-btn';
+      clearBtn.textContent = 'Clear test failures';
+      clearBtn.addEventListener('click', async () => {
+        clearBtn.disabled = true;
         try {
-          await retryItem(job.id);
-          showToast('Retry queued');
+          const result = await clearTestData();
+          showToast(`Cleared ${result.count} example item(s)`);
           await loadFailedJobs();
-          await refreshQueueStatus();
+          await refreshFooter();
         } catch (error) {
           showToast(error.message, 'error');
-          retryBtn.disabled = false;
+          clearBtn.disabled = false;
         }
       });
+      list.appendChild(clearBtn);
+    }
 
-      row.appendChild(retryBtn);
-      list.appendChild(row);
+    for (const job of userJobs.slice(0, 5)) {
+      renderFailedJobRow(job, list);
     }
   } catch {
     section.hidden = true;
@@ -185,57 +251,163 @@ async function refreshFooter() {
   $('#storage-used').textContent = formatBytes(storageBytes);
 }
 
-async function loadRecentItems(query = '') {
-  const list = $('#recent-list');
-  list.innerHTML = '<div class="empty">Loading…</div>';
+function renderRecentItemRow(item, { searching = false } = {}) {
+  const row = document.createElement('article');
+  row.className = 'recent-item';
 
-  try {
-    let items = [];
+  const matchLine = searching && item.score != null
+    ? `<p class="match-line">${Math.round(item.score * 100)}% match</p>`
+    : '';
 
-    if (query.trim()) {
-      const result = await search(query.trim());
-      items = result.results || [];
-    } else {
-      const result = await sendMessage({ type: 'GET_FOOTER_STATUS' });
+  const summaryLine = searching && item.summary
+    ? `<p class="summary-line">${escapeHtml(truncate(item.summary, 80))}</p>`
+    : '';
 
-      if (!result?.ok || !result.status.online) {
-        list.innerHTML = '<div class="empty">Daemon offline — start the backend first.</div>';
-        return;
-      }
+  row.innerHTML = `
+    <div class="icon">${sourceTypeIcon(item.source_type)}</div>
+    <div class="recent-item-body">
+      <h3>${escapeHtml(item.title || item.url)}</h3>
+      <p>${escapeHtml(item.domain || '')} · ${formatTimeAgo(item.created_at)}</p>
+      ${summaryLine}
+      ${matchLine}
+    </div>
+    <div class="recent-item-actions">
+      <span class="badge">${sourceTypeLabel(item.source_type)}</span>
+      <button type="button" class="recent-delete-btn" title="Delete">×</button>
+    </div>
+  `;
 
-      const { getItems } = await import('../shared/api.js');
-      const data = await getItems(20);
-      items = data.items || [];
+  row.querySelector('.recent-item-body').addEventListener('click', () => {
+    chrome.tabs.create({ url: item.url });
+  });
+
+  row.querySelector('.recent-delete-btn').addEventListener('click', async (event) => {
+    event.stopPropagation();
+
+    if (!window.confirm('Delete this item from Recall?')) {
+      return;
     }
 
-    if (items.length === 0) {
+    try {
+      await deleteItem(item.id);
+      showToast('Item deleted');
+      scheduleRecentSearch();
+      await refreshFooter();
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  });
+
+  return row;
+}
+
+async function loadRecentRecommendations() {
+  const list = $('#recent-list');
+  const suggestions = $('#recent-suggestions');
+  const status = $('#recent-search-status');
+
+  list.innerHTML = '<div class="empty">Loading…</div>';
+  status.textContent = 'Recommended for you';
+
+  try {
+    const footer = await sendMessage({ type: 'GET_FOOTER_STATUS' });
+    if (!footer?.ok || !footer.status.online) {
+      list.innerHTML = '<div class="empty">Daemon offline — start the backend first.</div>';
+      suggestions.innerHTML = '';
+      return;
+    }
+
+    const data = await getSearchRecommendations();
+    const recent = data.recent || [];
+    const queries = data.suggested_queries || [];
+
+    suggestions.innerHTML = renderSuggestionChips(queries.slice(0, 4));
+    bindSuggestionChips(suggestions, (query) => {
+      $('#recent-search').value = query;
+      $('#recent-search').dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    if (recent.length === 0) {
       list.innerHTML = '<div class="empty">No saved items yet.</div>';
       return;
     }
 
     list.innerHTML = '';
-
-    for (const item of items) {
-      const row = document.createElement('article');
-      row.className = 'recent-item';
-      row.innerHTML = `
-        <div class="icon">${sourceTypeIcon(item.source_type)}</div>
-        <div>
-          <h3>${escapeHtml(item.title || item.url)}</h3>
-          <p>${escapeHtml(item.domain || '')} · ${formatTimeAgo(item.created_at)}</p>
-        </div>
-        <span class="badge">${sourceTypeLabel(item.source_type)}</span>
-      `;
-
-      row.addEventListener('click', () => {
-        chrome.tabs.create({ url: item.url });
-      });
-
-      list.appendChild(row);
+    for (const item of recent) {
+      list.appendChild(renderRecentItemRow(item));
     }
   } catch (error) {
     list.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
   }
+}
+
+async function runRecentLiveSearch(query, { signal, requestId, empty }) {
+  const list = $('#recent-list');
+  const suggestions = $('#recent-suggestions');
+  const status = $('#recent-search-status');
+
+  if (empty) {
+    suggestions.innerHTML = '';
+    return loadRecentRecommendations();
+  }
+
+  suggestions.innerHTML = '';
+  status.textContent = 'Searching…';
+  list.innerHTML = '<div class="empty">Finding matches…</div>';
+
+  const result = await search(query, {}, { signal });
+
+  if (requestId !== state.recentRequestId) {
+    return;
+  }
+
+  const items = result.results || [];
+  const related = result.related || [];
+
+  if (items.length === 0) {
+    status.textContent = 'No matches';
+    list.innerHTML = '<div class="empty">Try different words or check spelling.</div>';
+    return;
+  }
+
+  status.textContent = `${items.length} result${items.length === 1 ? '' : 's'}${related.length ? ` · ${related.length} related` : ''}`;
+  list.innerHTML = '';
+
+  for (const item of items) {
+    list.appendChild(renderRecentItemRow(item, { searching: true }));
+  }
+
+  if (related.length > 0) {
+    const relatedHeader = document.createElement('div');
+    relatedHeader.className = 'empty';
+    relatedHeader.style.textAlign = 'left';
+    relatedHeader.style.padding = '8px 4px 4px';
+    relatedHeader.textContent = 'Related picks';
+    list.appendChild(relatedHeader);
+
+    for (const item of related.slice(0, 3)) {
+      list.appendChild(renderRecentItemRow(item, { searching: true }));
+    }
+  }
+}
+
+function scheduleRecentSearch() {
+  const query = $('#recent-search').value;
+
+  recentLiveSearch.schedule(query, async ({ query: q, empty, signal, requestId }) => {
+    state.recentRequestId = requestId;
+
+    try {
+      await runRecentLiveSearch(q, { signal, requestId, empty });
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        return;
+      }
+
+      $('#recent-search-status').textContent = '';
+      $('#recent-list').innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    }
+  });
 }
 
 function escapeHtml(value) {
@@ -379,14 +551,7 @@ function bindEvents() {
     await refreshFooter();
   });
 
-  let searchTimer = null;
-
-  $('#recent-search').addEventListener('input', (event) => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => {
-      loadRecentItems(event.target.value);
-    }, 300);
-  });
+  $('#recent-search').addEventListener('input', scheduleRecentSearch);
 
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'QUEUE_UPDATED') {

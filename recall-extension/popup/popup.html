@@ -10,7 +10,7 @@
     <div class="app">
       <header class="header">
         <div class="brand">
-          <span class="brand-dot"></span>
+          <img class="brand-logo" src="../icons/logo.svg" width="24" height="24" alt="" />
           <span>Recall</span>
         </div>
         <a class="search-link" id="open-search" href="#">Open search</a>
@@ -77,8 +77,10 @@
 
       <section class="panel" id="panel-recent" role="tabpanel">
         <div class="search-box">
-          <input type="text" id="recent-search" placeholder="Search your library…" />
+          <input type="text" id="recent-search" placeholder="Search as you type…" autocomplete="off" />
         </div>
+        <div class="search-status" id="recent-search-status"></div>
+        <div class="suggestion-row" id="recent-suggestions"></div>
         <div class="recent-list" id="recent-list"></div>
       </section>
 

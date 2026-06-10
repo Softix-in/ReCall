@@ -1,13 +1,16 @@
 export const API_BASE = 'http://127.0.0.1:7878';
 
 async function request(path, options = {}) {
+  const { signal, ...fetchOptions } = options;
+
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
       Accept: 'application/json',
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
       ...options.headers,
     },
-    ...options,
+    signal,
+    ...fetchOptions,
   });
 
   let data = null;
@@ -89,6 +92,18 @@ export function retryItem(id) {
   return request(`/items/${id}/retry`, { method: 'POST' });
 }
 
+export function deleteItem(id) {
+  return request(`/items/${id}`, { method: 'DELETE' });
+}
+
+export function getTestDataCount() {
+  return request('/items/test-data/count');
+}
+
+export function clearTestData() {
+  return request('/items/clear-test-data', { method: 'POST' });
+}
+
 export function pauseQueue() {
   return request('/queue/pause', { method: 'POST' });
 }
@@ -97,7 +112,7 @@ export function resumeQueue() {
   return request('/queue/resume', { method: 'POST' });
 }
 
-export function search(query, filters = {}) {
+export function search(query, filters = {}, { signal } = {}) {
   const params = new URLSearchParams({ q: query });
 
   if (filters.type) {
@@ -112,5 +127,9 @@ export function search(query, filters = {}) {
     params.set('since', filters.since);
   }
 
-  return request(`/search?${params}`);
+  return request(`/search?${params}`, { signal });
+}
+
+export function getSearchRecommendations() {
+  return request('/search/recommendations');
 }

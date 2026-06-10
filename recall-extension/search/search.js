@@ -1,4 +1,22 @@
-import { getItem, getJobHistory, getStatus, health, search } from '../shared/api.js';
+import {
+  clearTestData,
+  deleteItem,
+  getItem,
+  getJobHistory,
+  getSearchRecommendations,
+  getStatus,
+  getTestDataCount,
+  health,
+  search,
+} from '../shared/api.js';
+import { createLiveSearchRunner } from '../shared/live-search.js';
+import {
+  bindSearchCards,
+  bindSuggestionChips,
+  escapeHtml,
+  renderSearchItemCard,
+  renderSuggestionChips,
+} from '../shared/search-render.js';
 import {
   formatTimeAgo,
   sourceTypeLabel,
@@ -9,17 +27,13 @@ const $ = (selector) => document.querySelector(selector);
 
 const state = {
   results: [],
+  related: [],
   focusedIndex: -1,
   transcripts: new Map(),
+  activeRequestId: 0,
 };
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-}
+const liveSearch = createLiveSearchRunner({ debounceMs: 220, minLength: 2 });
 
 function sinceToIso(value) {
   const now = Date.now();
@@ -42,18 +56,101 @@ function sinceToIso(value) {
   return new Date(ms).toISOString();
 }
 
-function renderResults() {
+function getFilters() {
+  const sinceValue = $('#filter-since').value;
+  const since = sinceValue ? sinceToIso(sinceValue) : null;
+
+  return {
+    type: $('#filter-type').value || undefined,
+    mode: $('#filter-save-mode').value || undefined,
+    since: since || undefined,
+  };
+}
+
+function setPanelVisibility({ showRecommendations, showResults, showRelated }) {
+  $('#recommendations-panel').hidden = !showRecommendations;
+  $('#results-panel').hidden = !showResults;
+  $('#related-panel').hidden = !showRelated;
+}
+
+async function handleDeleteItem(id) {
+  await deleteItem(id);
+
+  state.results = state.results.filter((item) => item.id !== id);
+  state.related = state.related.filter((item) => item.id !== id);
+  state.transcripts.delete(id);
+
+  renderMainResults();
+  renderRelatedResults();
+
+  if ($('#search-input').value.trim().length < 2) {
+    await loadRecommendations();
+  }
+
+  await refreshFooter();
+  await updateTestDataButton();
+}
+
+async function updateTestDataButton() {
+  const button = $('#clear-test-data-btn');
+
+  try {
+    const { count } = await getTestDataCount();
+    button.hidden = count === 0;
+    button.textContent = count > 0 ? `Clear example data (${count})` : 'Clear example data';
+  } catch {
+    button.hidden = true;
+  }
+}
+
+async function loadRecommendations() {
+  const itemsEl = $('#recommended-items');
+  const queriesEl = $('#suggested-queries');
+  const hint = $('#recommendations-hint');
+
+  itemsEl.innerHTML = '<div class="empty">Loading recommendations…</div>';
+  await updateTestDataButton();
+
+  try {
+    const data = await getSearchRecommendations();
+    const recent = data.recent || [];
+    const queries = data.suggested_queries || [];
+
+    queriesEl.innerHTML = renderSuggestionChips(queries);
+    bindSuggestionChips(queriesEl, (query) => {
+      $('#search-input').value = query;
+      $('#search-input').dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    if (recent.length === 0) {
+      itemsEl.innerHTML = '<div class="empty">Save a few pages to get personalized recommendations.</div>';
+      hint.textContent = 'Try one of the suggested searches below';
+      return;
+    }
+
+    hint.textContent = 'Recently saved — click to open';
+    itemsEl.innerHTML = recent.map((item) => renderSearchItemCard(item, { compact: true, showDelete: true })).join('');
+    bindSearchCards(itemsEl, {
+      onOpen: (url) => window.open(url, '_blank', 'noopener'),
+      onDelete: handleDeleteItem,
+    });
+  } catch (error) {
+    itemsEl.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderMainResults() {
   const container = $('#results');
   const meta = $('#results-meta');
 
   if (state.results.length === 0) {
-    container.innerHTML = '<div class="empty">No results yet. Try a different query.</div>';
+    container.innerHTML = '<div class="empty">No matches yet. Keep typing or try a different phrase.</div>';
     meta.hidden = true;
     return;
   }
 
   meta.hidden = false;
-  meta.textContent = `${state.results.length} result${state.results.length === 1 ? '' : 's'}`;
+  meta.textContent = `${state.results.length} live result${state.results.length === 1 ? '' : 's'}`;
 
   container.innerHTML = state.results
     .map((item, index) => {
@@ -67,7 +164,7 @@ function renderResults() {
               <h2><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title || item.url)}</a></h2>
               <p class="summary">${escapeHtml(truncate(item.summary || item.note || 'No summary yet.', 220))}</p>
             </div>
-            ${item.score != null ? `<span class="chip score">${item.score.toFixed(3)}</span>` : ''}
+            ${item.score != null ? `<span class="chip score">${Math.round(item.score * 100)}% match</span>` : ''}
           </div>
           <div class="result-meta">
             <span class="chip">${sourceTypeLabel(item.source_type)}</span>
@@ -82,6 +179,7 @@ function renderResults() {
                 : ''
             }
             <button type="button" data-action="open" data-url="${escapeHtml(item.url)}">Open original</button>
+            <button type="button" class="delete-btn" data-action="delete" data-id="${item.id}">Delete</button>
           </div>
           ${showTranscript ? `<div class="transcript">${escapeHtml(transcript || 'Transcript not available.')}</div>` : ''}
         </article>
@@ -99,6 +197,23 @@ function renderResults() {
     button.addEventListener('click', () => toggleTranscript(button.dataset.id));
   });
 
+  container.querySelectorAll('[data-action="delete"]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const confirmed = window.confirm('Delete this item from Recall? This cannot be undone.');
+      if (!confirmed) {
+        return;
+      }
+
+      button.disabled = true;
+      try {
+        await handleDeleteItem(button.dataset.id);
+      } catch (error) {
+        alert(error.message);
+        button.disabled = false;
+      }
+    });
+  });
+
   container.querySelectorAll('.result').forEach((row) => {
     row.addEventListener('mouseenter', () => {
       state.focusedIndex = Number(row.dataset.index);
@@ -107,61 +222,98 @@ function renderResults() {
   });
 }
 
+function renderRelatedResults() {
+  const container = $('#related-results');
+
+  if (state.related.length === 0) {
+    $('#related-panel').hidden = true;
+    return;
+  }
+
+  $('#related-panel').hidden = false;
+  container.innerHTML = state.related
+    .map((item) => renderSearchItemCard(item, { showScore: true, showDelete: true }))
+    .join('');
+
+  bindSearchCards(container, {
+    onOpen: (url) => window.open(url, '_blank', 'noopener'),
+    onDelete: handleDeleteItem,
+  });
+}
+
 function highlightFocused() {
   document.querySelectorAll('.result').forEach((row, index) => {
     row.classList.toggle('focused', index === state.focusedIndex);
   });
 
-  const focused = document.querySelector('.result.focused');
-  focused?.scrollIntoView({ block: 'nearest' });
+  document.querySelector('.result.focused')?.scrollIntoView({ block: 'nearest' });
 }
 
-async function runSearch() {
-  const query = $('#search-input').value.trim();
-  const container = $('#results');
-
-  if (!query) {
-    container.innerHTML = '<div class="empty">Enter a search query to begin.</div>';
-    $('#results-meta').hidden = true;
+async function runLiveSearch(query, { signal, requestId, empty }) {
+  if (empty) {
+    state.results = [];
+    state.related = [];
+    state.transcripts.clear();
+    state.focusedIndex = -1;
+    setPanelVisibility({ showRecommendations: true, showResults: false, showRelated: false });
+    await loadRecommendations();
     return;
   }
 
-  container.innerHTML = '<div class="empty">Searching…</div>';
-  state.transcripts.clear();
-  state.focusedIndex = -1;
+  setPanelVisibility({ showRecommendations: false, showResults: true, showRelated: false });
+  $('#results').innerHTML = '<div class="empty">Searching…</div>';
+  $('#results-meta').hidden = true;
 
-  try {
-    const sinceValue = $('#filter-since').value;
-    const since = sinceValue ? sinceToIso(sinceValue) : null;
+  const result = await search(query, getFilters(), { signal });
 
-    const result = await search(query, {
-      type: $('#filter-type').value || undefined,
-      mode: $('#filter-save-mode').value || undefined,
-      since: since || undefined,
-    });
-
-    state.results = result.results || [];
-    renderResults();
-  } catch (error) {
-    container.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
-    $('#results-meta').hidden = true;
+  if (requestId !== state.activeRequestId) {
+    return;
   }
+
+  state.results = result.results || [];
+  state.related = result.related || [];
+  state.transcripts.clear();
+  state.focusedIndex = state.results.length > 0 ? 0 : -1;
+
+  renderMainResults();
+  renderRelatedResults();
+}
+
+function scheduleSearch() {
+  const query = $('#search-input').value;
+
+  liveSearch.schedule(query, async ({ query: q, empty, signal, requestId }) => {
+    state.activeRequestId = requestId;
+
+    try {
+      await runLiveSearch(q, { signal, requestId, empty });
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        return;
+      }
+
+      $('#results-panel').hidden = false;
+      $('#results').innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
+      $('#results-meta').hidden = true;
+      $('#related-panel').hidden = true;
+    }
+  });
 }
 
 async function toggleTranscript(id) {
   if (state.transcripts.has(id)) {
     state.transcripts.delete(id);
-    renderResults();
+    renderMainResults();
     return;
   }
 
   try {
     const data = await getItem(id, { includeTranscript: true });
     state.transcripts.set(id, data.item.transcript_text || 'Transcript not available.');
-    renderResults();
+    renderMainResults();
   } catch (error) {
     state.transcripts.set(id, `Failed to load transcript: ${error.message}`);
-    renderResults();
+    renderMainResults();
   }
 }
 
@@ -215,15 +367,42 @@ async function refreshFooter() {
 
 $('#search-form').addEventListener('submit', (event) => {
   event.preventDefault();
-  runSearch();
+  scheduleSearch();
+});
+
+$('#search-input').addEventListener('input', scheduleSearch);
+
+$('#search-input').addEventListener('focus', () => {
+  if (!$('#search-input').value.trim()) {
+    loadRecommendations();
+  }
+});
+
+$('#clear-test-data-btn').addEventListener('click', async () => {
+  const confirmed = window.confirm('Remove all example.com and benchmark test items from your library?');
+  if (!confirmed) {
+    return;
+  }
+
+  const button = $('#clear-test-data-btn');
+  button.disabled = true;
+
+  try {
+    const result = await clearTestData();
+    alert(`Removed ${result.count} example/test item(s).`);
+    scheduleSearch();
+    await loadRecommendations();
+    await refreshFooter();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+    await updateTestDataButton();
+  }
 });
 
 ['filter-type', 'filter-save-mode', 'filter-since'].forEach((id) => {
-  $(`#${id}`).addEventListener('change', () => {
-    if ($('#search-input').value.trim()) {
-      runSearch();
-    }
-  });
+  $(`#${id}`).addEventListener('change', scheduleSearch);
 });
 
 document.addEventListener('keydown', (event) => {
@@ -265,9 +444,10 @@ const initialQuery = params.get('q');
 
 if (initialQuery) {
   $('#search-input').value = initialQuery;
-  runSearch();
+  scheduleSearch();
 } else {
-  $('#results').innerHTML = '<div class="empty">Enter a search query to begin.</div>';
+  setPanelVisibility({ showRecommendations: true, showResults: false, showRelated: false });
+  loadRecommendations();
 }
 
 refreshFooter();

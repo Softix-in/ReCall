@@ -9,8 +9,13 @@
   <body>
     <main class="page">
       <header class="hero">
-        <h1>Recall Search</h1>
-        <p>Search your saved library by meaning or keywords.</p>
+        <div class="hero-brand">
+          <img class="brand-logo" src="../icons/logo.svg" width="40" height="40" alt="" />
+          <div>
+            <h1>Recall Search</h1>
+            <p>Search your saved library by meaning or keywords.</p>
+          </div>
+        </div>
       </header>
 
       <form class="search-bar" id="search-form">
@@ -48,7 +53,27 @@
       </div>
 
       <div class="meta" id="results-meta" hidden></div>
-      <section class="results" id="results"></section>
+
+      <section class="panel-section" id="recommendations-panel">
+        <div class="section-header-row">
+          <h2 class="section-title">Recommended for you</h2>
+          <button type="button" class="text-btn" id="clear-test-data-btn" hidden>Clear example data</button>
+        </div>
+        <p class="section-hint" id="recommendations-hint">Recent saves and suggested searches</p>
+        <div id="suggested-queries"></div>
+        <div id="recommended-items" class="results"></div>
+      </section>
+
+      <section class="panel-section" id="results-panel" hidden>
+        <h2 class="section-title">Results</h2>
+        <section class="results" id="results"></section>
+      </section>
+
+      <section class="panel-section" id="related-panel" hidden>
+        <h2 class="section-title">Related picks</h2>
+        <p class="section-hint">Similar to your top match</p>
+        <section class="results" id="related-results"></section>
+      </section>
 
       <details class="history-panel" id="history-panel">
         <summary>Job history (30 days)</summary>

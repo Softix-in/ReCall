@@ -7,7 +7,7 @@ $RecallHome = if ($env:RECALL_HOME) { $env:RECALL_HOME } else { Join-Path $env:U
 $WhisperDir = Join-Path $RecallHome "whisper"
 New-Item -ItemType Directory -Force -Path $WhisperDir | Out-Null
 
-$releaseUrl = "https://github.com/ggerganov/whisper.cpp/releases/download/v1.7.4/whisper-bin-x64.zip"
+$releaseUrl = "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.6/whisper-bin-x64.zip"
 $zipPath = Join-Path $env:TEMP "whisper-bin-x64.zip"
 $modelUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
 $modelPath = Join-Path $WhisperDir "ggml-small.bin"

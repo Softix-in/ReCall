@@ -109,6 +109,91 @@ function mergeCandidates(semanticMatches, keywordMatches, hybrid) {
   return Array.from(merged.values());
 }
 
+function buildSuggestedQueries(recentItems) {
+  const fromTitles = recentItems
+    .map((item) => item.title || item.summary || item.note)
+    .filter(Boolean)
+    .map((text) => text.split(/[.|:–-]/)[0].trim())
+    .filter((text) => text.length >= 4 && text.length <= 80);
+
+  const defaults = [
+    'recent videos',
+    'articles about technology',
+    'notes I wrote',
+    'tutorials and guides',
+  ];
+
+  return [...new Set([...fromTitles, ...defaults])].slice(0, 6);
+}
+
+function rankCandidates(candidates, itemMap, filters, { hybrid }) {
+  const scored = candidates
+    .map((candidate) => {
+      const item = itemMap.get(candidate.id);
+      if (!item || !applyFilters(item, filters)) {
+        return null;
+      }
+
+      return {
+        ...item,
+        semantic_score: candidate.semantic_score,
+        keyword_score: candidate.keyword_score,
+      };
+    })
+    .filter(Boolean);
+
+  const normalized = normalizeScores(
+    normalizeScores(scored, 'semantic_score'),
+    'keyword_score'
+  );
+
+  return normalized
+    .map((item) => ({
+      ...item,
+      score: computeFinalScore(item, { hybrid }),
+    }))
+    .sort((a, b) => b.score - a.score);
+}
+
+async function findRelatedItems(primaryResults, filters, { hybrid }) {
+  if (primaryResults.length === 0) {
+    return [];
+  }
+
+  const top = primaryResults[0];
+  const seedText = top.summary || top.note || top.title || top.content;
+
+  if (!seedText?.trim()) {
+    return [];
+  }
+
+  const embedding = await embedClient.embedText(seedText.trim());
+  const matches = await embedClient.queryVectors(embedding, 20);
+  const excludeIds = new Set(primaryResults.map((item) => item.id));
+
+  const candidates = matches
+    .filter((match) => !excludeIds.has(match.id))
+    .map((match) => ({
+      id: match.id,
+      semantic_score: match.score,
+      keyword_score: 0,
+    }));
+
+  const items = itemsDb.getItemsByIds(candidates.map((candidate) => candidate.id));
+  const itemMap = new Map(items.map((item) => [item.id, item]));
+
+  return rankCandidates(candidates, itemMap, filters, { hybrid }).slice(0, 5);
+}
+
+function getRecommendations() {
+  const recent = itemsDb.listDoneItems({ limit: 8 });
+
+  return {
+    recent,
+    suggested_queries: buildSuggestedQueries(recent),
+  };
+}
+
 async function search(query, filters = {}) {
   const trimmed = query.trim();
 
@@ -131,42 +216,19 @@ async function search(query, filters = {}) {
   const items = itemsDb.getItemsByIds(ids);
   const itemMap = new Map(items.map((item) => [item.id, item]));
 
-  const scored = candidates
-    .map((candidate) => {
-      const item = itemMap.get(candidate.id);
-      if (!item || !applyFilters(item, filters)) {
-        return null;
-      }
-
-      return {
-        ...item,
-        semantic_score: candidate.semantic_score,
-        keyword_score: candidate.keyword_score,
-      };
-    })
-    .filter(Boolean);
-
-  const normalized = normalizeScores(
-    normalizeScores(scored, 'semantic_score'),
-    'keyword_score'
-  );
-
-  const ranked = normalized
-    .map((item) => ({
-      ...item,
-      score: computeFinalScore(item, { hybrid }),
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 10);
+  const ranked = rankCandidates(candidates, itemMap, filters, { hybrid }).slice(0, 10);
+  const related = await findRelatedItems(ranked, filters, { hybrid });
 
   return {
     query: trimmed,
     mode: hybrid ? 'hybrid' : 'semantic',
     results: ranked,
+    related,
   };
 }
 
 module.exports = {
   search,
+  getRecommendations,
   isKeywordOriented,
 };

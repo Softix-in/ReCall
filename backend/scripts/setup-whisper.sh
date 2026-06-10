@@ -15,7 +15,7 @@ case "$OS-$ARCH" in
   *) echo "Unsupported platform: $OS $ARCH"; exit 1 ;;
 esac
 
-URL="https://github.com/ggerganov/whisper.cpp/releases/download/v1.7.4/$RELEASE"
+URL="https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.6/$RELEASE"
 ZIP="/tmp/whisper-bin.zip"
 
 echo "Downloading whisper.cpp ($RELEASE)..."

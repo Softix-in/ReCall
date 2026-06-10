@@ -20,7 +20,9 @@
   "permissions": ["activeTab", "storage", "scripting", "commands", "tabs"],
   "host_permissions": [
     "http://localhost:7878/*",
-    "http://127.0.0.1:7878/*"
+    "http://127.0.0.1:7878/*",
+    "http://*/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js",

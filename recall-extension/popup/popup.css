@@ -50,11 +50,11 @@ body {
   font-size: 15px;
 }
 
-.brand-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--accent);
+.brand-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  flex-shrink: 0;
 }
 
 .search-link {
@@ -292,7 +292,49 @@ textarea {
 }
 
 .search-box {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+}
+
+.search-status {
+  min-height: 18px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.suggestion-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.suggestion-row .suggestion-chip {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.suggestion-row .suggestion-chip:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.recent-item .match-line {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #a5b4fc;
+}
+
+.recent-item .summary-line {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .recent-list {
@@ -312,7 +354,34 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.recent-item-body {
   cursor: pointer;
+}
+
+.recent-item-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.recent-delete-btn {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+
+.recent-delete-btn:hover {
+  color: #fecaca;
+  border-color: rgba(239, 68, 68, 0.45);
 }
 
 .recent-item:hover {
@@ -381,7 +450,13 @@ textarea {
   color: #fecaca;
 }
 
-.failed-item button {
+.failed-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.failed-item button,
+.clear-test-btn {
   align-self: flex-start;
   border: 1px solid var(--border);
   background: var(--surface-2);
@@ -390,6 +465,18 @@ textarea {
   padding: 4px 8px;
   font-size: 11px;
   cursor: pointer;
+}
+
+.failed-hint {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.clear-test-btn {
+  margin-bottom: 10px;
+  padding: 6px 10px;
 }
 
 .footer {

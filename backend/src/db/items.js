@@ -211,6 +211,35 @@ function listStuckItems() {
   return rows.map(rowToItem);
 }
 
+function deleteItem(id) {
+  const result = getDb().prepare('DELETE FROM items WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
+function listTestItems() {
+  const rows = getDb().prepare(`
+    SELECT * FROM items
+    WHERE url LIKE '%benchmark.recall.local%'
+       OR url LIKE '%fail-job-test%'
+       OR (
+         url LIKE '%example.com%'
+         AND (
+           url LIKE '%phase%'
+           OR url LIKE '%recall-phase%'
+           OR url LIKE '%phase4-note%'
+         )
+       )
+    ORDER BY created_at DESC
+  `).all();
+
+  return rows.map(rowToItem);
+}
+
+function listAllItems() {
+  const rows = getDb().prepare('SELECT * FROM items ORDER BY created_at DESC').all();
+  return rows.map(rowToItem);
+}
+
 function getLastSavedItem() {
   const row = getDb().prepare(`
     SELECT * FROM items
@@ -250,4 +279,7 @@ module.exports = {
   listJobHistory,
   listStuckItems,
   getLastSavedItem,
+  deleteItem,
+  listAllItems,
+  listTestItems,
 };

@@ -14,17 +14,67 @@ async function writeQueue(queue) {
   await chrome.storage.local.set({ [STORAGE_KEY]: queue });
 }
 
+function isRestrictedTabUrl(url) {
+  if (!url) {
+    return true;
+  }
+
+  const restrictedPrefixes = [
+    'chrome:',
+    'chrome-extension:',
+    'edge:',
+    'about:',
+    'devtools:',
+    'view-source:',
+  ];
+
+  return restrictedPrefixes.some((prefix) => url.startsWith(prefix));
+}
+
+function sendTabMessage(tabId, message) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+
+      resolve(response);
+    });
+  });
+}
+
+async function ensureContentScript(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['content/content.js'],
+  });
+}
+
 async function scrapeActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-  if (!tab?.id || tab.url?.startsWith('chrome://') || tab.url?.startsWith('chrome-extension://')) {
-    throw new Error('Cannot capture this page');
+  if (!tab?.id) {
+    throw new Error('No active browser tab found');
   }
 
-  const response = await chrome.tabs.sendMessage(tab.id, { type: 'SCRAPE_PAGE' });
+  if (isRestrictedTabUrl(tab.url)) {
+    throw new Error(
+      'Open a normal website tab first (not Chrome settings, extensions, or a new tab page), then open Recall.'
+    );
+  }
+
+  let response;
+
+  try {
+    response = await sendTabMessage(tab.id, { type: 'SCRAPE_PAGE' });
+  } catch {
+    await ensureContentScript(tab.id);
+    response = await sendTabMessage(tab.id, { type: 'SCRAPE_PAGE' });
+  }
 
   if (!response?.ok || !response.data) {
-    throw new Error('Failed to scrape page metadata');
+    throw new Error('Could not read this page. Refresh it, then try again.');
   }
 
   return response.data;
