@@ -50,6 +50,8 @@ function checkInstallArtifacts() {
     'scripts/register-daemon.ps1',
     'scripts/register-daemon.sh',
     'recall-tray/windows-tray.ps1',
+    'recall-tray/tray.py',
+    'recall-tray/start-tray.sh',
     'CONTRIBUTING.md',
     'recall-extension/settings/settings.html',
   ];

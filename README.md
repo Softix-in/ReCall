@@ -123,7 +123,7 @@ shubh-database/
 │   ├── popup/ content/ background/ search/ settings/
 │   └── shared/              # API client + utilities
 │
-├── recall-tray/             # Windows system tray helper
+├── recall-tray/             # System tray (Windows PowerShell + macOS/Linux Python)
 ├── scripts/                 # Daemon registration (launchd/systemd/Task Scheduler)
 ├── install.ps1              # Windows one-command installer
 ├── install.sh               # macOS/Linux one-command installer
@@ -192,7 +192,7 @@ The installer will:
 3. Download Whisper.cpp + small model and ONNX MiniLM model
 4. Create `~/.recall/` directory structure
 5. Register the daemon (Task Scheduler / launchd / systemd)
-6. Start the Windows system tray and open `chrome://extensions`
+6. Start the system tray and open `chrome://extensions`
 
 ### Manual development setup
 
@@ -419,6 +419,8 @@ npm run test:phase5
 npm run test:classify
 ```
 
+CI runs `test:classify`, `test:phase1`, and `test:phase5` on every push via `.github/workflows/ci.yml`.
+
 ### Search benchmark
 
 ```bash
@@ -447,6 +449,8 @@ $env:BENCHMARK_ITEMS=10000; npm run benchmark:search
 | Daemon memory (idle) | < 150 MB |
 
 Measured on a typical dev machine with 1,000 indexed items: search p50 ~15–40ms, p99 typically under 100ms (run `npm run benchmark:search` on your hardware).
+
+Whisper.cpp uses Metal on macOS and CUDA on Linux/Windows when an NVIDIA GPU is detected (`-ngl 99`).
 
 ---
 

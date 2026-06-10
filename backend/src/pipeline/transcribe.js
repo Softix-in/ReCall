@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const { runCommand } = require('../utils/subprocess');
+const { getWhisperAccelArgs } = require('../utils/whisper-gpu');
 const { getSettings } = require('../services/settings-service');
 
 function whisperBinaryPath() {
@@ -63,11 +64,8 @@ async function transcribeAudio(audioPath, itemId) {
     '-f', audioPath,
     '-of', outputBase,
     '-otxt',
+    ...getWhisperAccelArgs(),
   ];
-
-  if (process.platform === 'darwin') {
-    args.push('-ng', '0');
-  }
 
   await runCommand(binary, args, {
     timeout: config.TRANSCRIPTION_TIMEOUT_MS,

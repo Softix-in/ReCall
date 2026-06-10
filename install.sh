@@ -47,6 +47,9 @@ node "$ROOT/recall-extension/scripts/generate-icons.js"
 echo "Registering launchd/systemd service..."
 bash "$ROOT/scripts/register-daemon.sh"
 
+echo "Installing tray dependencies..."
+python3 -m pip install -r "$ROOT/recall-tray/requirements.txt"
+
 echo ""
 echo "=== Installation complete ==="
 echo "1. Open chrome://extensions"
@@ -54,7 +57,12 @@ echo "2. Enable Developer mode"
 echo "3. Load unpacked -> $ROOT/recall-extension"
 echo ""
 echo "Backend: http://127.0.0.1:7878"
+echo "Tray: bash $ROOT/recall-tray/start-tray.sh"
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
   open "chrome://extensions/" 2>/dev/null || true
+fi
+
+if [[ "$OSTYPE" == "darwin"* || -n "${DISPLAY:-}" ]]; then
+  nohup bash "$ROOT/recall-tray/start-tray.sh" >/dev/null 2>&1 &
 fi

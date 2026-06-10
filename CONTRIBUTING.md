@@ -9,7 +9,7 @@ Thank you for helping improve Recall. This guide focuses on the most common exte
 | `backend/` | Node.js daemon — API, queue, pipeline |
 | `recall-embed/` | Python FastAPI service — ONNX embeddings + ChromaDB |
 | `recall-extension/` | Chrome MV3 extension |
-| `recall-tray/` | Windows system tray helper |
+| `recall-tray/` | System tray helper (`windows-tray.ps1` on Windows, `tray.py` on macOS/Linux) |
 
 ## Adding a new content type
 

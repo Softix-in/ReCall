@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            recall-embed/requirements.txt
+            recall-tray/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run URL classifier tests
+        working-directory: backend
+        run: npm run test:classify
+
+      - name: Install embed + tray dependencies
+        run: |
+          python -m pip install -r recall-embed/requirements.txt
+          python -m pip install transformers
+          python -m pip install -r recall-tray/requirements.txt
+
+      - name: Download ONNX model
+        run: python recall-embed/scripts/download_model.py
+
+      - name: Initialize database
+        working-directory: backend
+        run: npm run migrate
+
+      - name: Start backend
+        working-directory: backend
+        run: |
+          npm start > ../daemon-ci.log 2>&1 &
+          echo $! > ../daemon.pid
+
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:7878/health >/dev/null; then
+              echo "Backend ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend failed to start"
+          cat daemon-ci.log || true
+          exit 1
+
+      - name: Run phase tests
+        working-directory: backend
+        run: |
+          npm run test:phase1
+          npm run test:phase5
+
+      - name: Upload daemon log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-ci-log
+          path: daemon-ci.log
