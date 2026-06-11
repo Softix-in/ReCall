@@ -1,6 +1,6 @@
 {
   "name": "backend",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "recall local backend daemon",
   "main": "src/server.js",
   "scripts": {
@@ -25,6 +25,7 @@
     "cheerio": "^1.0.0",
     "express": "^4.21.0",
     "jsdom": "^25.0.1",
-    "node-cron": "^4.2.1"
+    "node-cron": "^4.2.1",
+    "pdf-parse": "^2.4.5"
   }
 }

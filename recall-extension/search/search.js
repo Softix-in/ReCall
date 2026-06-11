@@ -1,13 +1,20 @@
 import {
+  API_BASE,
+  askLibrary,
   clearTestData,
   deleteItem,
+  getAskStatus,
+  getExportUrl,
   getItem,
+  getItemTags,
   getJobHistory,
+  getItems,
   getSearchRecommendations,
   getStatus,
   getTestDataCount,
   health,
   search,
+  updateItemTags,
 } from '../shared/api.js';
 import { createLiveSearchRunner } from '../shared/live-search.js';
 import {
@@ -31,6 +38,7 @@ const state = {
   focusedIndex: -1,
   transcripts: new Map(),
   activeRequestId: 0,
+  tagEditor: { itemId: null, tags: [] },
 };
 
 const liveSearch = createLiveSearchRunner({ debounceMs: 220, minLength: 2 });
@@ -75,6 +83,10 @@ function setPanelVisibility({ showRecommendations, showResults, showRelated }) {
 
 async function handleDeleteItem(id) {
   await deleteItem(id);
+
+  if (state.tagEditor.itemId === id) {
+    closeTagEditor();
+  }
 
   state.results = state.results.filter((item) => item.id !== id);
   state.related = state.related.filter((item) => item.id !== id);
@@ -171,6 +183,7 @@ function renderMainResults() {
             <span class="chip">${escapeHtml(item.domain || '')}</span>
             <span class="chip">${formatTimeAgo(item.created_at)}</span>
             <span class="chip">${item.save_mode === 'manual_note' ? 'Manual note' : 'Auto-scrape'}</span>
+            ${item.tags ? item.tags.split(',').filter(Boolean).map((t) => `<span class="chip tag-chip">#${escapeHtml(t.trim())}</span>`).join('') : ''}
           </div>
           <div class="result-actions">
             ${
@@ -179,8 +192,10 @@ function renderMainResults() {
                 : ''
             }
             <button type="button" data-action="open" data-url="${escapeHtml(item.url)}">Open original</button>
+            <button type="button" data-action="tags" data-id="${item.id}" class="${state.tagEditor.itemId === item.id ? 'active' : ''}">${state.tagEditor.itemId === item.id ? 'Close tags' : 'Tags'}</button>
             <button type="button" class="delete-btn" data-action="delete" data-id="${item.id}">Delete</button>
           </div>
+          ${state.tagEditor.itemId === item.id ? renderInlineTagEditorHtml() : ''}
           ${showTranscript ? `<div class="transcript">${escapeHtml(transcript || 'Transcript not available.')}</div>` : ''}
         </article>
       `;
@@ -196,6 +211,12 @@ function renderMainResults() {
   container.querySelectorAll('[data-action="transcript"]').forEach((button) => {
     button.addEventListener('click', () => toggleTranscript(button.dataset.id));
   });
+
+  container.querySelectorAll('[data-action="tags"]').forEach((button) => {
+    button.addEventListener('click', () => toggleTagEditor(button.dataset.id));
+  });
+
+  bindInlineTagEditor(container);
 
   container.querySelectorAll('[data-action="delete"]').forEach((button) => {
     button.addEventListener('click', async () => {
@@ -264,7 +285,9 @@ async function runLiveSearch(query, { signal, requestId, empty }) {
   $('#results').innerHTML = '<div class="empty">Searching…</div>';
   $('#results-meta').hidden = true;
 
-  const result = await search(query, getFilters(), { signal });
+  // Strip leading # so clicking a collection tag chip works as a search
+  const cleanQuery = query.startsWith('#') ? query.slice(1) : query;
+  const result = await search(cleanQuery, getFilters(), { signal });
 
   if (requestId !== state.activeRequestId) {
     return;
@@ -438,6 +461,291 @@ document.addEventListener('keydown', (event) => {
     }
   }
 });
+
+// ── Inline tag editor (no full-screen overlay) ─────────────────────────────
+
+function renderInlineTagEditorHtml() {
+  const tags = state.tagEditor.tags;
+  const pills = tags
+    .map((tag) => `
+      <span class="tag-pill">
+        #${escapeHtml(tag)}
+        <button type="button" class="tag-remove" data-tag="${escapeHtml(tag)}" aria-label="Remove ${escapeHtml(tag)}">×</button>
+      </span>
+    `)
+    .join('');
+
+  return `
+    <div class="tag-editor-inline" data-tag-editor>
+      <p class="tag-editor-label">Edit tags</p>
+      <div class="tag-list" data-tag-list>${pills || '<span class="tag-empty">No tags yet</span>'}</div>
+      <div class="tag-input-row">
+        <input type="text" data-tag-input placeholder="Add tag…" autocomplete="off" maxlength="40" />
+        <button type="button" class="text-btn" data-tag-add>Add</button>
+      </div>
+      <div class="tag-editor-actions">
+        <button type="button" class="text-btn" data-tag-cancel>Cancel</button>
+        <button type="button" data-tag-save>Save tags</button>
+      </div>
+    </div>
+  `;
+}
+
+function closeTagEditor() {
+  state.tagEditor.itemId = null;
+  state.tagEditor.tags = [];
+}
+
+async function toggleTagEditor(itemId) {
+  if (state.tagEditor.itemId === itemId) {
+    closeTagEditor();
+    renderMainResults();
+    return;
+  }
+
+  state.tagEditor.itemId = itemId;
+  state.tagEditor.tags = [];
+
+  try {
+    const { tags } = await getItemTags(itemId);
+    state.tagEditor.tags = tags;
+  } catch {
+    state.tagEditor.tags = [];
+  }
+
+  renderMainResults();
+
+  const input = document.querySelector('[data-tag-input]');
+  input?.focus();
+}
+
+function bindInlineTagEditor(container) {
+  const panel = container.querySelector('[data-tag-editor]');
+  if (!panel) {
+    return;
+  }
+
+  const list = panel.querySelector('[data-tag-list]');
+  const input = panel.querySelector('[data-tag-input]');
+
+  function refreshTagList() {
+    if (state.tagEditor.tags.length === 0) {
+      list.innerHTML = '<span class="tag-empty">No tags yet</span>';
+      return;
+    }
+
+    list.innerHTML = state.tagEditor.tags
+      .map((tag) => `
+        <span class="tag-pill">
+          #${escapeHtml(tag)}
+          <button type="button" class="tag-remove" data-tag="${escapeHtml(tag)}">×</button>
+        </span>
+      `)
+      .join('');
+
+    list.querySelectorAll('.tag-remove').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.tagEditor.tags = state.tagEditor.tags.filter((t) => t !== btn.dataset.tag);
+        refreshTagList();
+      });
+    });
+  }
+
+  function addTag() {
+    const raw = input.value.trim().toLowerCase().replace(/[^a-z0-9-_ ]/g, '');
+    if (!raw || state.tagEditor.tags.includes(raw) || state.tagEditor.tags.length >= 20) {
+      return;
+    }
+    state.tagEditor.tags = [...state.tagEditor.tags, raw];
+    input.value = '';
+    refreshTagList();
+  }
+
+  panel.querySelector('[data-tag-add]').addEventListener('click', addTag);
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ',') {
+      event.preventDefault();
+      addTag();
+    }
+    if (event.key === 'Escape') {
+      closeTagEditor();
+      renderMainResults();
+    }
+  });
+
+  panel.querySelector('[data-tag-cancel]').addEventListener('click', () => {
+    closeTagEditor();
+    renderMainResults();
+  });
+
+  panel.querySelector('[data-tag-save]').addEventListener('click', async () => {
+    const { itemId, tags } = state.tagEditor;
+    if (!itemId) {
+      return;
+    }
+
+    const saveBtn = panel.querySelector('[data-tag-save]');
+    saveBtn.disabled = true;
+
+    try {
+      await updateItemTags(itemId, tags);
+      const patch = (item) => (item.id === itemId ? { ...item, tags: tags.join(',') } : item);
+      state.results = state.results.map(patch);
+      state.related = state.related.map(patch);
+      closeTagEditor();
+      renderMainResults();
+      renderRelatedResults();
+    } catch (error) {
+      alert(error.message);
+      saveBtn.disabled = false;
+    }
+  });
+}
+
+// ── Collections ─────────────────────────────────────────────────────────────
+
+async function loadCollections() {
+  const container = $('#collections-list');
+  const countEl = $('#collections-count');
+
+  try {
+    const { items } = await getItems(200);
+
+    // Group items by tag
+    const tagMap = new Map();
+    for (const item of items) {
+      const tags = item.tags ? item.tags.split(',').map((t) => t.trim()).filter(Boolean) : [];
+      for (const tag of tags) {
+        if (!tagMap.has(tag)) tagMap.set(tag, []);
+        tagMap.get(tag).push(item);
+      }
+    }
+
+    const untagged = items.filter((item) => !item.tags?.trim());
+
+    if (tagMap.size === 0 && untagged.length === 0) {
+      container.innerHTML = '<p class="section-hint">No items yet. Save some pages and add tags to create collections.</p>';
+      countEl.textContent = '';
+      return;
+    }
+
+    countEl.textContent = tagMap.size ? `${tagMap.size}` : '';
+
+    const collections = [...tagMap.entries()].sort((a, b) => b[1].length - a[1].length);
+
+    container.innerHTML = collections
+      .map(([tag, tagItems]) => `
+        <div class="collection-card" data-tag="${escapeHtml(tag)}">
+          <div class="collection-icon">#</div>
+          <div>
+            <div class="collection-name">${escapeHtml(tag)}</div>
+            <div class="collection-count">${tagItems.length} item${tagItems.length === 1 ? '' : 's'}</div>
+          </div>
+        </div>
+      `)
+      .join('');
+
+    container.querySelectorAll('.collection-card').forEach((card) => {
+      card.addEventListener('click', () => {
+        const tag = card.dataset.tag;
+        $('#search-input').value = `#${tag}`;
+        $('#search-input').dispatchEvent(new Event('input', { bubbles: true }));
+        document.getElementById('collections-panel').open = false;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+
+    if (untagged.length > 0) {
+      const untaggedCard = document.createElement('div');
+      untaggedCard.className = 'collection-card collection-untagged';
+      untaggedCard.innerHTML = `
+        <div class="collection-icon">∅</div>
+        <div>
+          <div class="collection-name">Untagged</div>
+          <div class="collection-count">${untagged.length} item${untagged.length === 1 ? '' : 's'}</div>
+        </div>
+      `;
+      container.appendChild(untaggedCard);
+    }
+  } catch (error) {
+    container.innerHTML = `<p class="section-hint">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+document.getElementById('collections-panel').addEventListener('toggle', function () {
+  if (this.open) loadCollections();
+});
+
+// ── Ask ──────────────────────────────────────────────────────────────────────
+
+async function initAskPanel() {
+  const statusBar = $('#ask-status-bar');
+
+  try {
+    const status = await getAskStatus();
+    if (status.available) {
+      statusBar.innerHTML = `<span class="ask-online">Ollama online · model: ${escapeHtml(status.model)}</span>`;
+    } else {
+      statusBar.innerHTML = `<span class="ask-offline">Ollama not running — <a href="https://ollama.com" target="_blank" rel="noopener">install Ollama</a> then run: <code>ollama pull ${escapeHtml(status.model)}</code></span>`;
+    }
+  } catch {
+    statusBar.innerHTML = '<span class="ask-offline">Could not reach Ollama status endpoint</span>';
+  }
+}
+
+document.getElementById('ask-panel').addEventListener('toggle', function () {
+  if (this.open) initAskPanel();
+});
+
+$('#ask-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const question = $('#ask-input').value.trim();
+  if (!question) return;
+
+  const resultEl = $('#ask-result');
+  const btn = $('#ask-btn');
+
+  resultEl.hidden = false;
+  resultEl.innerHTML = '<div class="ask-thinking">Thinking…</div>';
+  btn.disabled = true;
+
+  try {
+    const { answer, sources } = await askLibrary(question);
+
+    const sourcesHtml = sources.length
+      ? `<div class="ask-sources"><strong>Sources used:</strong><ol>${
+          sources.map((s) => `<li><a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.title)}</a></li>`).join('')
+        }</ol></div>`
+      : '';
+
+    resultEl.innerHTML = `
+      <div class="ask-answer">${escapeHtml(answer)}</div>
+      ${sourcesHtml}
+    `;
+  } catch (error) {
+    resultEl.innerHTML = `<div class="ask-error">${escapeHtml(error.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Export ──────────────────────────────────────────────────────────────────
+
+function triggerExportDownload(format) {
+  const url = getExportUrl(format);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+$('#export-json-btn').addEventListener('click', () => triggerExportDownload('json'));
+$('#export-md-btn').addEventListener('click', () => triggerExportDownload('markdown'));
+
+// ── Initialise ───────────────────────────────────────────────────────────────
 
 const params = new URLSearchParams(window.location.search);
 const initialQuery = params.get('q');

@@ -31,12 +31,26 @@ function isTwitterVideoUrl(url) {
   return /(twitter\.com|x\.com)\/.+\/status\//i.test(url) && /\/video\//i.test(url);
 }
 
+function isPdfUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.pathname.toLowerCase().endsWith('.pdf');
+  } catch {
+    return false;
+  }
+}
+
 function classifyUrl(url, metadata = {}) {
+  if (isPdfUrl(url)) return 'pdf';
+
   const hostname = parseHostname(url);
   const ogType = (metadata.og_type || metadata.ogType || '').toLowerCase();
   const hasVideo = Boolean(metadata.has_video ?? metadata.hasVideo);
 
-  if (ogType === 'video' || ogType === 'video.other') {
+  // Only trust og:type=video for known video hosts — generic docs/article sites
+  // sometimes emit og:type="video" for embedded demo clips.
+  const isKnownVideoHost = matchesHost(hostname, VIDEO_HOSTS) || isInstagramReel(url);
+  if ((ogType === 'video' || ogType === 'video.other') && isKnownVideoHost) {
     return 'video';
   }
 

@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Recall</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
@@ -13,7 +15,7 @@
           <img class="brand-logo" src="../icons/logo.svg" width="24" height="24" alt="" />
           <span>Recall</span>
         </div>
-        <a class="search-link" id="open-search" href="#">Open search</a>
+        <a class="search-link" id="open-search" href="#">Search ↗</a>
       </header>
 
       <nav class="tabs" role="tablist">
@@ -45,7 +47,7 @@
             Add a note
           </label>
 
-          <div class="note-area" id="note-area">
+          <div class="note-area" id="note-area" hidden>
             <textarea id="capture-note" placeholder="What should you remember about this page?"></textarea>
             <button class="btn btn-secondary" id="save-note-btn">Save with note</button>
           </div>
@@ -54,7 +56,7 @@
 
       <section class="panel" id="panel-vault" role="tabpanel">
         <div class="url-row">
-          <input type="url" id="vault-url" placeholder="Paste any URL…" />
+          <input type="url" id="vault-url" placeholder="Paste any URL…" autocomplete="off" />
           <button class="inline-btn" id="paste-url-btn" title="Paste from clipboard">Paste</button>
         </div>
 
@@ -64,12 +66,12 @@
         </div>
 
         <p class="hint" id="vault-hint">
-          Recall will fetch the page, extract content, summarise it, and make it searchable.
+          Fetch, extract, summarise and make searchable — all locally.
         </p>
 
-        <div class="note-area visible" id="vault-note-area" hidden>
-          <label class="field-label" for="vault-note">Your note</label>
-          <textarea id="vault-note" placeholder="Describe why you saved this link…"></textarea>
+        <div class="note-area" id="vault-note-area" hidden>
+          <label class="field-label" for="vault-note">Note</label>
+          <textarea id="vault-note" placeholder="Describe why you're saving this…"></textarea>
         </div>
 
         <button class="btn btn-primary" id="vault-save-btn">Save link</button>

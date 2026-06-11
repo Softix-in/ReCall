@@ -57,10 +57,13 @@ async function processAutoScrape(item) {
   return {
     source_type: sourceType,
     title: title || fetched.title || item.title,
-    summary: summary || fetched.text.slice(0, 500),
+    summary: fetched.fallback && fetched.fallbackReason
+      ? fetched.fallbackReason
+      : (summary || fetched.text.slice(0, 500)),
     content: fetched.text,
     thumbnail: fetched.thumbnail,
     transcript: fetched.transcript || null,
+    error_message: fetched.fallback ? fetched.fallbackReason : null,
   };
 }
 
@@ -103,10 +106,14 @@ async function processItem(itemId) {
       ...result,
       processing: 'done',
       processed_at: Date.now(),
-      error_message: null,
+      error_message: result.error_message ?? null,
     });
 
-    logJob(`[${itemId}] processing done — "${updated.title}"`);
+    if (result.error_message) {
+      logJob(`[${itemId}] processing done with warning — ${result.error_message}`);
+    } else {
+      logJob(`[${itemId}] processing done — "${updated.title}"`);
+    }
     return updated;
   } catch (error) {
     logJob(`[${itemId}] processing failed — ${error.message}`);

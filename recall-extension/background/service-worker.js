@@ -2,12 +2,36 @@ import { API_BASE, capture, getItemStatus, getStatus, health } from '../shared/a
 
 const POLL_INTERVAL_MS = 5000;
 const STORAGE_KEY = 'recallJobQueue';
+const FAILED_QUEUE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 let pollTimer = null;
 
 async function readQueue() {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
   return stored[STORAGE_KEY] || [];
+}
+
+async function pruneQueue() {
+  const queue = await readQueue();
+  const now = Date.now();
+  const pruned = queue.filter((job) => {
+    if (job.processing === 'done') {
+      return false;
+    }
+
+    if (job.processing === 'failed') {
+      return now - (job.createdAt || 0) <= FAILED_QUEUE_TTL_MS;
+    }
+
+    return true;
+  });
+
+  if (pruned.length !== queue.length) {
+    await writeQueue(pruned);
+    await updateBadge();
+  }
+
+  return pruned;
 }
 
 async function writeQueue(queue) {
@@ -153,9 +177,22 @@ async function saveVaultLink(payload) {
 async function pollQueue() {
   const queue = await readQueue();
   let changed = false;
+  const now = Date.now();
+  const nextQueue = [];
 
   for (const job of queue) {
-    if (job.processing === 'done' || job.processing === 'failed') {
+    if (job.processing === 'done') {
+      changed = true;
+      continue;
+    }
+
+    if (job.processing === 'failed') {
+      const age = now - (job.createdAt || 0);
+      if (age > FAILED_QUEUE_TTL_MS) {
+        changed = true;
+        continue;
+      }
+      nextQueue.push(job);
       continue;
     }
 
@@ -169,13 +206,25 @@ async function pollQueue() {
         job.error = status.error_message || null;
         changed = true;
       }
+
+      if (job.processing === 'done') {
+        changed = true;
+        continue;
+      }
+
+      if (job.processing === 'failed') {
+        nextQueue.push(job);
+        continue;
+      }
+
+      nextQueue.push(job);
     } catch {
-      // Backend may be offline — keep existing state.
+      nextQueue.push(job);
     }
   }
 
-  if (changed) {
-    await writeQueue(queue);
+  if (changed || nextQueue.length !== queue.length) {
+    await writeQueue(nextQueue);
     chrome.runtime.sendMessage({ type: 'QUEUE_UPDATED' }).catch(() => {});
   }
 
@@ -262,6 +311,39 @@ chrome.commands.onCommand.addListener(async (command) => {
 
   if (command === 'open-search') {
     chrome.tabs.create({ url: chrome.runtime.getURL('search/search.html') });
+    return;
+  }
+
+  if (command === 'save-highlight') {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id || isRestrictedTabUrl(tab.url)) return;
+
+      let response;
+      try {
+        response = await sendTabMessage(tab.id, { type: 'CAPTURE_HIGHLIGHT' });
+      } catch {
+        await ensureContentScript(tab.id);
+        response = await sendTabMessage(tab.id, { type: 'CAPTURE_HIGHLIGHT' });
+      }
+
+      if (!response?.ok || !response.data?.highlight) return;
+
+      const { highlight, url, title, domain } = response.data;
+      await enqueueCapture({
+        url,
+        title,
+        domain,
+        has_video: false,
+        save_mode: 'manual_note',
+        note: highlight,
+        highlight: highlight,
+      });
+
+      await sendTabMessage(tab.id, { type: 'HIGHLIGHT_SAVED' }).catch(() => {});
+    } catch (error) {
+      console.error('Highlight save failed:', error);
+    }
   }
 });
 
@@ -290,7 +372,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         }
         case 'GET_QUEUE': {
-          const queue = await readQueue();
+          const queue = await pruneQueue();
+          sendResponse({ ok: true, queue });
+          break;
+        }
+        case 'PRUNE_QUEUE': {
+          const queue = await pruneQueue();
           sendResponse({ ok: true, queue });
           break;
         }

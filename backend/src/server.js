@@ -12,6 +12,7 @@ const itemsRouter = require('./routes/items');
 const searchRouter = require('./routes/search');
 const settingsRouter = require('./routes/settings');
 const { createJobsRouter } = require('./routes/jobs');
+const askRouter = require('./routes/ask');
 const { startBackupScheduler, stopBackupScheduler } = require('./services/backup-service');
 const { logDaemon } = require('./utils/logger');
 const { startEmbedService, stopEmbedService } = require('./services/embed-launcher');
@@ -105,6 +106,7 @@ async function bootstrap() {
   app.use(itemsRouter);
   app.use(searchRouter);
   app.use(settingsRouter);
+  app.use(askRouter);
 
   app.use((req, res) => {
     res.status(404).json({ error: 'Not found', path: req.path });

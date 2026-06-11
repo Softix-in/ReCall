@@ -18,7 +18,10 @@ const cases = [
   ['https://www.reddit.com/r/node/comments/abc', 'link'],
   ['https://www.youtube.com/shorts/abc', 'video'],
   ['https://openai.com/index/some-post', 'article', { og_type: 'article' }],
-  ['https://example.com/watch', 'video', { og_type: 'video' }],
+  // og:type=video on a generic domain is now treated as link (not a real video host)
+  ['https://example.com/watch', 'link', { og_type: 'video' }],
+  // og:type=video on a known video host does classify as video
+  ['https://www.youtube.com/watch?v=abc', 'video', { og_type: 'video' }],
   ['https://twitter.com/user/status/1', 'video', { has_video: true }],
   ['https://personal.github.io/blog/post', 'article'],
   ['https://stackoverflow.com/questions/1', 'link'],

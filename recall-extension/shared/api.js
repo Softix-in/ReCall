@@ -133,3 +133,31 @@ export function search(query, filters = {}, { signal } = {}) {
 export function getSearchRecommendations() {
   return request('/search/recommendations');
 }
+
+export function getItemTags(id) {
+  return request(`/items/${id}/tags`);
+}
+
+export function updateItemTags(id, tags) {
+  return request(`/items/${id}/tags`, {
+    method: 'PUT',
+    body: JSON.stringify({ tags }),
+  });
+}
+
+export function getExportUrl(format = 'json', type = null) {
+  const params = new URLSearchParams({ format });
+  if (type) params.set('type', type);
+  return `${API_BASE}/export?${params}`;
+}
+
+export function getAskStatus() {
+  return request('/ask/status');
+}
+
+export function askLibrary(question, limit = 8) {
+  return request('/ask', {
+    method: 'POST',
+    body: JSON.stringify({ question, limit }),
+  });
+}

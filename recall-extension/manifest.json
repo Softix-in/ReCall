@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Recall",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Save and search anything you read online — fully local.",
   "icons": {
     "16": "icons/icon-16.png",
@@ -49,6 +49,13 @@
         "mac": "Command+Shift+F"
       },
       "description": "Open Recall search"
+    },
+    "save-highlight": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+H",
+        "mac": "Command+Shift+H"
+      },
+      "description": "Save selected text as a highlight note"
     }
   },
   "options_page": "settings/settings.html"

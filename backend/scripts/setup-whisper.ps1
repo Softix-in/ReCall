@@ -16,12 +16,20 @@ Write-Host "Downloading whisper.cpp binary..."
 Invoke-WebRequest -Uri $releaseUrl -OutFile $zipPath
 Expand-Archive -Path $zipPath -DestinationPath $WhisperDir -Force
 
-# Flatten common release layouts
-Get-ChildItem -Path $WhisperDir -Recurse -Filter "main.exe" | ForEach-Object {
-  Copy-Item $_.FullName (Join-Path $WhisperDir "main.exe") -Force
-}
-Get-ChildItem -Path $WhisperDir -Recurse -Filter "whisper-cli.exe" | ForEach-Object {
-  Copy-Item $_.FullName (Join-Path $WhisperDir "whisper-cli.exe") -Force
+# The zip extracts to a Release/ subfolder with DLLs co-located.
+# The backend prefers Release/whisper-cli.exe automatically.
+# Also copy binary + DLLs to root dir so either path works.
+$releaseDir = Join-Path $WhisperDir "Release"
+if (Test-Path $releaseDir) {
+  Get-ChildItem -Path $releaseDir -Filter "*.exe" | ForEach-Object {
+    $dest = Join-Path $WhisperDir $_.Name
+    if (-not (Test-Path $dest)) { Copy-Item $_.FullName $dest }
+  }
+  # Copy required DLLs to root so the root-level .exe can also find them
+  Get-ChildItem -Path $releaseDir -Filter "*.dll" | ForEach-Object {
+    $dest = Join-Path $WhisperDir $_.Name
+    if (-not (Test-Path $dest)) { Copy-Item $_.FullName $dest }
+  }
 }
 
 if (-not (Test-Path $modelPath)) {
@@ -30,4 +38,5 @@ if (-not (Test-Path $modelPath)) {
 }
 
 Write-Host "Whisper setup complete: $WhisperDir"
-Write-Host "Binaries:" (Get-ChildItem $WhisperDir -Filter *.exe | Select-Object -ExpandProperty Name)
+$binaries = Get-ChildItem $releaseDir -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+Write-Host "Binaries in Release/:" $binaries

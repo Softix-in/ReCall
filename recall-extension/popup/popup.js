@@ -94,6 +94,38 @@ function createPlaceholderThumb(data) {
   return div;
 }
 
+function normalizeUrl(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    const pathname = parsed.pathname.replace(/\/$/, '') || '/';
+    return `${parsed.origin}${pathname}${parsed.search}`;
+  } catch {
+    return url || '';
+  }
+}
+
+function findRelevantQueueJob(queue) {
+  if (!queue?.length) {
+    return null;
+  }
+
+  const currentUrl = state.scraped?.url ? normalizeUrl(state.scraped.url) : null;
+
+  if (state.lastCaptureId) {
+    const byId = queue.find((entry) => entry.id === state.lastCaptureId);
+    if (byId) {
+      return byId;
+    }
+  }
+
+  if (currentUrl) {
+    return queue.find((entry) => normalizeUrl(entry.url) === currentUrl) || null;
+  }
+
+  return null;
+}
+
 function updateCaptureStatus(job) {
   const pill = $('#capture-status');
 
@@ -133,8 +165,7 @@ async function refreshQueueStatus() {
     return;
   }
 
-  const job = response.queue.find((entry) => entry.id === state.lastCaptureId) || response.queue[0];
-  updateCaptureStatus(job);
+  updateCaptureStatus(findRelevantQueueJob(response.queue));
 }
 
 function renderFailedJobRow(job, list) {
@@ -429,12 +460,15 @@ function updateVaultMode(mode) {
   const hint = $('#vault-hint');
   const saveBtn = $('#vault-save-btn');
 
-  if (mode === 'manual_note') {
-    noteArea.hidden = false;
+  const showNote = mode === 'manual_note';
+  noteArea.hidden = !showNote;
+  noteArea.classList.toggle('visible', showNote);
+
+  if (showNote) {
     hint.textContent = 'Only metadata is fetched. Your note becomes the summary and search text.';
     saveBtn.textContent = 'Save with note';
+    $('#vault-note').focus();
   } else {
-    noteArea.hidden = true;
     hint.textContent = 'Recall will fetch the page, extract content, summarise it, and make it searchable.';
     saveBtn.textContent = 'Save link';
   }
@@ -456,7 +490,13 @@ function bindEvents() {
   });
 
   $('#note-toggle').addEventListener('change', (event) => {
-    $('#note-area').classList.toggle('visible', event.target.checked);
+    const noteArea = $('#note-area');
+    const show = event.target.checked;
+    noteArea.classList.toggle('visible', show);
+    noteArea.hidden = !show;
+    if (show) {
+      $('#capture-note').focus();
+    }
   });
 
   $('#quick-save-btn').addEventListener('click', async () => {
@@ -563,7 +603,7 @@ function bindEvents() {
 
 bindEvents();
 loadActiveTabScrape();
-refreshQueueStatus();
+sendMessage({ type: 'PRUNE_QUEUE' }).then(() => refreshQueueStatus());
 refreshFooter();
 loadFailedJobs();
 

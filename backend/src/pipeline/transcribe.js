@@ -6,17 +6,22 @@ const { getWhisperAccelArgs } = require('../utils/whisper-gpu');
 const { getSettings } = require('../services/settings-service');
 
 function whisperBinaryPath() {
-  const win = path.join(config.WHISPER_DIR, 'whisper-cli.exe');
-  const winAlt = path.join(config.WHISPER_DIR, 'main.exe');
-  const unix = path.join(config.WHISPER_DIR, 'whisper-cli');
-  const unixAlt = path.join(config.WHISPER_DIR, 'main');
+  const releaseDir = path.join(config.WHISPER_DIR, 'Release');
 
-  if (fs.existsSync(win)) return win;
-  if (fs.existsSync(winAlt)) return winAlt;
-  if (fs.existsSync(unix)) return unix;
-  if (fs.existsSync(unixAlt)) return unixAlt;
+  const candidates = [
+    // Prefer the Release/ directory where DLLs (ggml.dll, whisper.dll etc.) are co-located
+    path.join(releaseDir, 'whisper-cli.exe'),
+    path.join(releaseDir, 'main.exe'),
+    // Root-level binaries (may lack required DLLs on Windows builds)
+    path.join(config.WHISPER_DIR, 'whisper-cli.exe'),
+    path.join(config.WHISPER_DIR, 'main.exe'),
+    // Unix
+    path.join(releaseDir, 'whisper-cli'),
+    path.join(config.WHISPER_DIR, 'whisper-cli'),
+    path.join(config.WHISPER_DIR, 'main'),
+  ];
 
-  return null;
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
 }
 
 function whisperModelPath() {

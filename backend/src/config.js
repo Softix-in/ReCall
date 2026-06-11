@@ -19,7 +19,7 @@ const EMBED_PORT = Number(process.env.EMBED_PORT) || 7879;
 module.exports = {
   PORT: Number(process.env.PORT) || 7878,
   HOST: process.env.HOST || '127.0.0.1',
-  VERSION: '0.5.0',
+  VERSION: '0.6.0',
   RECALL_HOME,
   DATA_DIR,
   DB_PATH,
