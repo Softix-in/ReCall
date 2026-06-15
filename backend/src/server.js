@@ -17,6 +17,7 @@ const { startBackupScheduler, stopBackupScheduler } = require('./services/backup
 const { logDaemon } = require('./utils/logger');
 const { startEmbedService, stopEmbedService } = require('./services/embed-launcher');
 const embedClient = require('./services/embed-client');
+const { corsMiddleware, authMiddleware } = require('./middleware/security');
 
 let queue;
 let server;
@@ -47,11 +48,20 @@ async function bootstrap() {
   ensureRecallDirs();
   runMigrations();
 
-  try {
-    await startEmbedService();
-  } catch (error) {
-    console.error(`Warning: embed service failed to start: ${error.message}`);
-    console.error('Semantic search and embeddings will be unavailable until the embed service is running.');
+  if (config.EMBED_AUTO_START) {
+    try {
+      await startEmbedService();
+    } catch (error) {
+      console.error(`Warning: embed service failed to start: ${error.message}`);
+      console.error('Semantic search and embeddings will be unavailable until the embed service is running.');
+    }
+  } else {
+    try {
+      const health = await embedClient.checkHealth();
+      console.log(`Using external embed service (${health.vector_count ?? 0} vectors indexed)`);
+    } catch (error) {
+      console.error(`Warning: embed service not reachable at ${config.EMBED_BASE_URL}: ${error.message}`);
+    }
   }
 
   queue = new JobQueue(processItem, {
@@ -71,6 +81,8 @@ async function bootstrap() {
   const app = express();
 
   app.use(express.json());
+  app.use(corsMiddleware);
+  app.use(authMiddleware);
 
   app.use((req, res, next) => {
     const start = Date.now();

@@ -1,4 +1,4 @@
-import { API_BASE, capture, getItemStatus, getStatus, health } from '../shared/api.js';
+import { capture, getItemStatus, getStatus, health, retryItem } from '../shared/api.js';
 
 const POLL_INTERVAL_MS = 5000;
 const STORAGE_KEY = 'recallJobQueue';
@@ -392,11 +392,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         }
         case 'RETRY_ITEM': {
-          const response = await fetch(`${API_BASE}/items/${message.id}/retry`, { method: 'POST' });
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(data.error || 'Retry failed');
-          }
+          const data = await retryItem(message.id);
           sendResponse({ ok: true, result: data });
           break;
         }

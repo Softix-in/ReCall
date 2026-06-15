@@ -1,0 +1,22 @@
+FROM python:3.12-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY recall-embed/requirements.txt ./recall-embed/requirements.txt
+RUN pip install --no-cache-dir -r recall-embed/requirements.txt
+
+COPY recall-embed/ ./recall-embed/
+
+ENV RECALL_HOME=/data \
+    EMBED_HOST=0.0.0.0 \
+    EMBED_PORT=7879
+
+RUN mkdir -p /data/models /data/data/chroma \
+  && python recall-embed/scripts/download_model.py
+
+EXPOSE 7879
+
+CMD ["python", "recall-embed/embed_service.py"]

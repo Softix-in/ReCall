@@ -1,12 +1,72 @@
-export const API_BASE = 'http://127.0.0.1:7878';
+const DEFAULT_API_BASE = 'http://127.0.0.1:7878';
+const STORAGE_KEYS = {
+  backendUrl: 'recallBackendUrl',
+  apiKey: 'recallApiKey',
+};
+
+export const API_BASE = DEFAULT_API_BASE;
+
+export async function getExtensionConfig() {
+  if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+    return { base: DEFAULT_API_BASE, apiKey: '' };
+  }
+
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.backendUrl,
+    STORAGE_KEYS.apiKey,
+  ]);
+
+  const base = (stored[STORAGE_KEYS.backendUrl] || DEFAULT_API_BASE).replace(/\/$/, '');
+  const apiKey = stored[STORAGE_KEYS.apiKey] || '';
+
+  return { base, apiKey };
+}
+
+export async function saveExtensionConfig({ backendUrl, apiKey }) {
+  const payload = {};
+
+  if (backendUrl !== undefined) {
+    payload[STORAGE_KEYS.backendUrl] = backendUrl.trim().replace(/\/$/, '') || DEFAULT_API_BASE;
+  }
+
+  if (apiKey !== undefined) {
+    payload[STORAGE_KEYS.apiKey] = apiKey.trim();
+  }
+
+  await chrome.storage.local.set(payload);
+}
+
+export async function getConnectionSettings() {
+  return getExtensionConfig();
+}
+
+export async function loadExtensionConfig() {
+  const { base, apiKey } = await getExtensionConfig();
+  return {
+    backendUrl: base,
+    apiKey,
+  };
+}
+
+async function buildAuthHeaders(apiKey) {
+  if (!apiKey) {
+    return {};
+  }
+
+  return {
+    Authorization: `Bearer ${apiKey}`,
+  };
+}
 
 async function request(path, options = {}) {
   const { signal, ...fetchOptions } = options;
+  const { base, apiKey } = await getExtensionConfig();
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${base}${path}`, {
     headers: {
       Accept: 'application/json',
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(await buildAuthHeaders(apiKey)),
       ...options.headers,
     },
     signal,
@@ -145,10 +205,11 @@ export function updateItemTags(id, tags) {
   });
 }
 
-export function getExportUrl(format = 'json', type = null) {
+export async function getExportUrl(format = 'json', type = null) {
+  const { base } = await getExtensionConfig();
   const params = new URLSearchParams({ format });
   if (type) params.set('type', type);
-  return `${API_BASE}/export?${params}`;
+  return `${base}/export?${params}`;
 }
 
 export function getAskStatus() {
@@ -159,5 +220,19 @@ export function askLibrary(question, limit = 8) {
   return request('/ask', {
     method: 'POST',
     body: JSON.stringify({ question, limit }),
+  });
+}
+
+export async function authenticatedFetch(path, options = {}) {
+  const { base, apiKey } = await getExtensionConfig();
+
+  return fetch(`${base}${path}`, {
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(await buildAuthHeaders(apiKey)),
+      ...options.headers,
+    },
   });
 }

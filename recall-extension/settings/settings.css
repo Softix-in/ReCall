@@ -147,6 +147,25 @@ ul {
   margin-top: 4px;
 }
 
+.connection-form {
+  margin-bottom: 28px;
+}
+
+.btn-secondary {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 11px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  border-color: var(--border-focus);
+}
+
 .btn-primary {
   border: none;
   border-radius: 9px;

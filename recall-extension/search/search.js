@@ -1,9 +1,9 @@
 import {
-  API_BASE,
   askLibrary,
   clearTestData,
   deleteItem,
   getAskStatus,
+  getConnectionSettings,
   getExportUrl,
   getItem,
   getItemTags,
@@ -732,18 +732,37 @@ $('#ask-form').addEventListener('submit', async (event) => {
 
 // ── Export ──────────────────────────────────────────────────────────────────
 
-function triggerExportDownload(format) {
-  const url = getExportUrl(format);
+async function triggerExportDownload(format) {
+  const url = await getExportUrl(format);
+  const { apiKey } = await getConnectionSettings();
+  const headers = apiKey ? { 'X-Recall-API-Key': apiKey } : {};
+  const response = await fetch(url, { headers });
+
+  if (!response.ok) {
+    throw new Error(`Export failed (${response.status})`);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = '';
+  a.href = objectUrl;
+  a.download = `recall-export.${format === 'markdown' ? 'md' : 'json'}`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+  URL.revokeObjectURL(objectUrl);
 }
 
-$('#export-json-btn').addEventListener('click', () => triggerExportDownload('json'));
-$('#export-md-btn').addEventListener('click', () => triggerExportDownload('markdown'));
+$('#export-json-btn').addEventListener('click', () => {
+  triggerExportDownload('json').catch((error) => {
+    alert(error.message);
+  });
+});
+$('#export-md-btn').addEventListener('click', () => {
+  triggerExportDownload('markdown').catch((error) => {
+    alert(error.message);
+  });
+});
 
 // ── Initialise ───────────────────────────────────────────────────────────────
 

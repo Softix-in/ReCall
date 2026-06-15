@@ -18,6 +18,26 @@
         </div>
       </header>
 
+      <form id="connection-form" class="connection-form">
+        <fieldset>
+          <legend>Server connection</legend>
+          <p class="hint">Use the default for local Recall, or point to your hosted server (HTTPS recommended).</p>
+          <label>
+            Backend URL
+            <input type="url" id="apiBase" placeholder="http://127.0.0.1:7878" required />
+          </label>
+          <label>
+            API key (optional for local, required for hosted)
+            <input type="password" id="apiKey" autocomplete="off" placeholder="Leave empty for local" />
+          </label>
+          <div class="actions">
+            <button type="submit" class="btn-primary">Save connection</button>
+            <button type="button" id="testConnection" class="btn-secondary">Test connection</button>
+            <span id="connectionStatus" class="status"></span>
+          </div>
+        </fieldset>
+      </form>
+
       <form id="settings-form">
         <label>
           Whisper model size
@@ -55,6 +75,21 @@
           Backup retention (days)
           <input type="number" id="backupRetentionDays" min="1" max="30" />
         </label>
+
+        <fieldset>
+          <legend>Backend connection</legend>
+          <p class="hint">Use local backend by default. Point to your hosted server when the daemon is not running on this PC.</p>
+
+          <label>
+            Backend URL
+            <input type="url" id="backendUrl" placeholder="http://127.0.0.1:7878" />
+          </label>
+
+          <label>
+            API key (required for hosted backend)
+            <input type="password" id="apiKey" placeholder="Leave empty for local-only" autocomplete="off" />
+          </label>
+        </fieldset>
 
         <fieldset>
           <legend>Keyboard shortcuts</legend>

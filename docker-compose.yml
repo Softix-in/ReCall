@@ -1,0 +1,46 @@
+services:
+  embed:
+    build:
+      context: .
+      dockerfile: recall-embed/Dockerfile
+    restart: unless-stopped
+    environment:
+      RECALL_HOME: /data/recall
+      EMBED_HOST: 0.0.0.0
+      EMBED_PORT: 7879
+    volumes:
+      - recall-data:/data/recall
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7879/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      embed:
+        condition: service_healthy
+    ports:
+      - "${RECALL_PORT:-7878}:7878"
+    environment:
+      RECALL_HOME: /data/recall
+      HOST: 0.0.0.0
+      PORT: 7878
+      EMBED_HOST: embed
+      EMBED_PORT: 7879
+      EMBED_AUTO_START: "false"
+      RECALL_API_KEY: ${RECALL_API_KEY:-}
+      RECALL_CORS_ORIGINS: ${RECALL_CORS_ORIGINS:-*}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      PYTHON_BIN: python3
+      YTDLP_BIN: yt-dlp
+    volumes:
+      - recall-data:/data/recall
+
+volumes:
+  recall-data:
