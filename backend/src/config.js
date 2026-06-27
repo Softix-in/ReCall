@@ -20,6 +20,7 @@ module.exports = {
   PORT: Number(process.env.PORT) || 7878,
   HOST: process.env.HOST || '127.0.0.1',
   API_KEY: process.env.RECALL_API_KEY || '',
+  FIREWORKS_API_KEY: process.env.FIREWORKS_API_KEY || '',
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
   EMBED_AUTO_START: process.env.EMBED_AUTO_START !== 'false',
   VERSION: '0.6.0',

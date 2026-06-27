@@ -484,6 +484,11 @@ function bindEvents() {
     chrome.tabs.create({ url: chrome.runtime.getURL('search/search.html') });
   });
 
+  $('#open-profile').addEventListener('click', (event) => {
+    event.preventDefault();
+    chrome.tabs.create({ url: chrome.runtime.getURL('profile/profile.html') });
+  });
+
   $('#settings-link').addEventListener('click', (event) => {
     event.preventDefault();
     chrome.runtime.openOptionsPage();

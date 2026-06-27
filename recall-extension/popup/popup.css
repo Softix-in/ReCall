@@ -43,6 +43,7 @@ body {
   justify-content: space-between;
   padding: 14px 16px 12px;
   border-bottom: 1px solid var(--border);
+  gap: 8px;
 }
 
 .brand {
@@ -59,6 +60,13 @@ body {
   width: 26px;
   height: 26px;
   border-radius: 7px;
+  flex-shrink: 0;
+}
+
+.header-links {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
 }
 

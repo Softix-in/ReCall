@@ -18,26 +18,6 @@
         </div>
       </header>
 
-      <form id="connection-form" class="connection-form">
-        <fieldset>
-          <legend>Server connection</legend>
-          <p class="hint">Use the default for local Recall, or point to your hosted server (HTTPS recommended).</p>
-          <label>
-            Backend URL
-            <input type="url" id="apiBase" placeholder="http://127.0.0.1:7878" required />
-          </label>
-          <label>
-            API key (optional for local, required for hosted)
-            <input type="password" id="apiKey" autocomplete="off" placeholder="Leave empty for local" />
-          </label>
-          <div class="actions">
-            <button type="submit" class="btn-primary">Save connection</button>
-            <button type="button" id="testConnection" class="btn-secondary">Test connection</button>
-            <span id="connectionStatus" class="status"></span>
-          </div>
-        </fieldset>
-      </form>
-
       <form id="settings-form">
         <label>
           Whisper model size
@@ -87,8 +67,39 @@
 
           <label>
             API key (required for hosted backend)
-            <input type="password" id="apiKey" placeholder="Leave empty for local-only" autocomplete="off" />
+            <input type="password" id="recallApiKey" placeholder="Leave empty for local-only" autocomplete="off" />
           </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Identity &amp; Career AI</legend>
+          <p class="hint">Fireworks API key powers JD analysis, resume tailoring, and the profile chat assistant. Stored encrypted on the backend.</p>
+
+          <label>
+            Fireworks API key
+            <input type="password" id="fireworksApiKey" autocomplete="off" placeholder="fw_..." />
+          </label>
+
+          <label>
+            Quality model
+            <input type="text" id="aiQualityModel" readonly />
+          </label>
+
+          <label>
+            Chat model
+            <input type="text" id="aiChatModel" readonly />
+          </label>
+
+          <label class="checkbox">
+            <input type="checkbox" id="aiDeepAnalysis" />
+            Deep analysis (glm-5p2 reasoning)
+          </label>
+
+          <div class="actions">
+            <button type="button" id="saveAiSettings" class="btn-secondary">Save AI settings</button>
+            <button type="button" id="testFireworksKey" class="btn-secondary">Test API key</button>
+            <span id="aiStatus" class="status"></span>
+          </div>
         </fieldset>
 
         <fieldset>

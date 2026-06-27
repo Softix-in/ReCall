@@ -16,6 +16,11 @@
     "benchmark:search": "node scripts/benchmark-search.js",
     "clear:test-data": "node scripts/clear-test-data.js",
     "test:classify": "node scripts/test-classify.js",
+    "test:identity-career-step1": "node scripts/test-identity-career-step1.js",
+    "test:identity-career-step3": "node scripts/test-identity-career-step3.js",
+    "test:identity-career-step4": "node scripts/test-identity-career-step4.js",
+    "test:identity-career-step5": "node scripts/test-identity-career-step5.js",
+    "test:identity-career": "node scripts/test-identity-career-step1.js && node scripts/test-identity-career-step3.js && node scripts/test-identity-career-step4.js && node scripts/test-identity-career-step5.js",
     "backfill:embeddings": "node scripts/backfill-embeddings.js",
     "setup:embed": "powershell -ExecutionPolicy Bypass -File scripts/setup-embed.ps1"
   },
@@ -26,6 +31,9 @@
     "express": "^4.21.0",
     "jsdom": "^25.0.1",
     "node-cron": "^4.2.1",
-    "pdf-parse": "^2.4.5"
+    "openai": "^6.45.0",
+    "pdf-parse": "^2.4.5",
+    "puppeteer": "^24.36.1",
+    "express-rate-limit": "^8.2.1"
   }
 }

@@ -511,6 +511,7 @@ Whisper.cpp uses Metal on macOS and CUDA on Linux/Windows when an NVIDIA GPU is 
 ## Documentation
 
 - **[Product Requirements & Implementation Plan](./recall-prd-implementation-plan.md)** — Full PRD, data schema, API design, and phase-by-phase tasks
+- **[Identity & Career (CAREER.md)](./CAREER.md)** — Fireworks setup, profile/career features, API routes, troubleshooting
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** — Adding new URL classifiers and content handlers
 
 ---

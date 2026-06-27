@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Recall — Profile & Career</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+    <link rel="stylesheet" href="profile.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div class="hero-top">
+          <a href="#" class="back-link" id="back-link">← Back to Recall</a>
+          <a href="#" class="settings-link" id="settings-link">Settings</a>
+        </div>
+        <div class="hero-brand">
+          <img class="brand-logo" src="../icons/logo.svg" width="40" height="40" alt="" />
+          <div>
+            <h1>Profile & Career</h1>
+            <p>Your identity, projects, and resume — ready for job applications.</p>
+          </div>
+        </div>
+      </header>
+
+      <div class="connection-banner" id="connection-banner" hidden>
+        <span id="connection-banner-text">Backend unreachable. Check that Recall is running and your API key is set in Settings.</span>
+      </div>
+
+      <nav class="subnav" role="tablist" aria-label="Profile sections">
+        <button type="button" class="subnav-btn active" data-tab="identity" role="tab" aria-selected="true">Identity</button>
+        <button type="button" class="subnav-btn" data-tab="projects" role="tab" aria-selected="false">Projects</button>
+        <button type="button" class="subnav-btn" data-tab="resume" role="tab" aria-selected="false">Resume</button>
+        <button type="button" class="subnav-btn" data-tab="career" role="tab" aria-selected="false">Career</button>
+      </nav>
+
+      <section class="tab-panel active" id="tab-identity" role="tabpanel"></section>
+      <section class="tab-panel" id="tab-projects" role="tabpanel" hidden></section>
+      <section class="tab-panel" id="tab-resume" role="tabpanel" hidden></section>
+      <section class="tab-panel" id="tab-career" role="tabpanel" hidden></section>
+    </main>
+
+    <div class="toast" id="toast"></div>
+
+    <div id="chat-drawer-root"></div>
+
+    <script type="module" src="profile.js"></script>
+  </body>
+</html>

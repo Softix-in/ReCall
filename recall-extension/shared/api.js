@@ -223,6 +223,320 @@ export function askLibrary(question, limit = 8) {
   });
 }
 
+export function fetchProfile() {
+  return request('/profile');
+}
+
+export function updateProfile(patch) {
+  return request('/profile', {
+    method: 'PUT',
+    body: JSON.stringify(patch),
+  });
+}
+
+export function fetchProjects() {
+  return request('/profile/projects');
+}
+
+export function createProject(payload) {
+  return request('/profile/projects', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateProject(id, payload) {
+  return request(`/profile/projects/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteProject(id) {
+  return request(`/profile/projects/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export function reorderProjects(orderedIds) {
+  return request('/profile/projects/reorder', {
+    method: 'PUT',
+    body: JSON.stringify({ ordered_ids: orderedIds }),
+  });
+}
+
+export function fetchMasterResume() {
+  return request('/profile/resume');
+}
+
+export function saveMasterResume(payload) {
+  return request('/profile/resume', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchResumeHistory() {
+  return request('/profile/resume/history');
+}
+
+export function updateProfileAiSettings(patch) {
+  return request('/profile/ai-settings', {
+    method: 'PUT',
+    body: JSON.stringify(patch),
+  });
+}
+
+export function testAiSettings(payload = {}) {
+  return request('/profile/ai-settings/test', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function careerChat(messages) {
+  return request('/career/chat', {
+    method: 'POST',
+    body: JSON.stringify({ messages }),
+  });
+}
+
+export function listJdAnalyses() {
+  return request('/career/analyses');
+}
+
+export function getJdAnalysis(id) {
+  return request(`/career/analyses/${id}`);
+}
+
+export async function analyzeJd(jdText, { onEvent, streamBullets = true } = {}) {
+  const { base, apiKey } = await getExtensionConfig();
+
+  const response = await fetch(`${base}/career/analyze-jd`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: streamBullets ? 'text/event-stream' : 'application/json',
+      ...(await buildAuthHeaders(apiKey)),
+    },
+    body: JSON.stringify({
+      jd_text: jdText,
+      stream_bullets: streamBullets,
+    }),
+  });
+
+  if (!response.ok) {
+    let data = null;
+
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+
+    const error = new Error(data?.error || `Request failed (${response.status})`);
+    error.status = response.status;
+    error.code = data?.code || data?.error;
+    error.data = data;
+    throw error;
+  }
+
+  if (!streamBullets) {
+    return response.json();
+  }
+
+  if (!response.body) {
+    throw new Error('Streaming response not supported');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalAnalysis = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop() || '';
+
+    for (const part of parts) {
+      const line = part.trim();
+
+      if (!line.startsWith('data:')) {
+        continue;
+      }
+
+      const payload = line.slice(5).trim();
+
+      if (!payload || payload === '[DONE]') {
+        continue;
+      }
+
+      const event = JSON.parse(payload);
+      onEvent?.(event);
+
+      if (event.type === 'error') {
+        const error = new Error(event.message || event.error || 'JD analysis failed');
+        error.status = event.error === 'invalid_api_key' ? 401 : 500;
+        error.code = event.error;
+        error.data = event;
+        throw error;
+      }
+
+      if (event.type === 'done') {
+        finalAnalysis = event.analysis;
+      }
+    }
+  }
+
+  return { analysis: finalAnalysis };
+}
+
+export async function buildResume(payload) {
+  const { base, apiKey } = await getExtensionConfig();
+  const format = payload.format || 'json';
+
+  const response = await fetch(`${base}/career/build-resume`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: format === 'json' ? 'application/json' : '*/*',
+      ...(await buildAuthHeaders(apiKey)),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let data = null;
+
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+
+    const error = new Error(data?.error || `Request failed (${response.status})`);
+    error.status = response.status;
+    error.code = data?.code || data?.error;
+    error.data = data;
+    throw error;
+  }
+
+  const resume_id = response.headers.get('X-Resume-Id');
+
+  if (format === 'pdf') {
+    return {
+      blob: await response.blob(),
+      resume_id,
+    };
+  }
+
+  if (format === 'text') {
+    return {
+      plain_text: await response.text(),
+      resume_id,
+    };
+  }
+
+  const data = await response.json();
+  return { ...data, resume_id: data.resume_id || resume_id };
+}
+
+export function fetchResumeById(id) {
+  return request(`/profile/resume/${id}`);
+}
+
+export function generateBio(payload = {}) {
+  return request('/career/generate/bio', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function generatePitch(payload = {}) {
+  return request('/career/generate/pitch', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function generateCoverLetter(payload = {}, { onToken } = {}) {
+  const { base, apiKey } = await getExtensionConfig();
+
+  const response = await fetch(`${base}/career/generate/cover-letter`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(await buildAuthHeaders(apiKey)),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let data = null;
+
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+
+    const error = new Error(data?.error || `Request failed (${response.status})`);
+    error.status = response.status;
+    error.code = data?.code || data?.error;
+    throw error;
+  }
+
+  if (!response.body) {
+    throw new Error('Streaming response not supported');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullText = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop() || '';
+
+    for (const part of parts) {
+      const line = part.trim();
+
+      if (!line.startsWith('data:')) {
+        continue;
+      }
+
+      const payloadText = line.slice(5).trim();
+
+      if (!payloadText || payloadText === '[DONE]') {
+        continue;
+      }
+
+      const event = JSON.parse(payloadText);
+      const token = event.text || '';
+      fullText += token;
+      onToken?.(token, fullText);
+    }
+  }
+
+  return { text: fullText };
+}
+
 export async function authenticatedFetch(path, options = {}) {
   const { base, apiKey } = await getExtensionConfig();
 

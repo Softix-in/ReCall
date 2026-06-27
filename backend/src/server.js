@@ -13,6 +13,10 @@ const searchRouter = require('./routes/search');
 const settingsRouter = require('./routes/settings');
 const { createJobsRouter } = require('./routes/jobs');
 const askRouter = require('./routes/ask');
+const { createProfileRouter } = require('./routes/profile');
+const { createCareerRouter } = require('./routes/career');
+const { ProjectEmbedQueue } = require('./queue/project-embed-queue');
+const { embedProject } = require('./workers/project-embed-worker');
 const { startBackupScheduler, stopBackupScheduler } = require('./services/backup-service');
 const { logDaemon } = require('./utils/logger');
 const { startEmbedService, stopEmbedService } = require('./services/embed-launcher');
@@ -20,6 +24,7 @@ const embedClient = require('./services/embed-client');
 const { corsMiddleware, authMiddleware } = require('./middleware/security');
 
 let queue;
+let projectEmbedQueue;
 let server;
 
 function resumeStuckJobs(activeQueue) {
@@ -75,6 +80,8 @@ async function bootstrap() {
     },
   });
 
+  projectEmbedQueue = new ProjectEmbedQueue(embedProject);
+
   resumeStuckJobs(queue);
   startBackupScheduler();
 
@@ -119,6 +126,8 @@ async function bootstrap() {
   app.use(searchRouter);
   app.use(settingsRouter);
   app.use(askRouter);
+  app.use(createProfileRouter(projectEmbedQueue));
+  app.use(createCareerRouter({ projectEmbedQueue }));
 
   app.use((req, res) => {
     res.status(404).json({ error: 'Not found', path: req.path });
@@ -128,7 +137,7 @@ async function bootstrap() {
     console.log(`Recall backend listening on http://${config.HOST}:${config.PORT}`);
   });
 
-  return { app, server, queue };
+  return { app, server, queue, projectEmbedQueue };
 }
 
 async function shutdown(signal) {
@@ -145,6 +154,15 @@ async function shutdown(signal) {
       await queue.drain();
     } catch (error) {
       console.error(`Error while draining queue: ${error.message}`);
+    }
+  }
+
+  if (projectEmbedQueue) {
+    console.log('Draining project embed queue...');
+    try {
+      await projectEmbedQueue.drain();
+    } catch (error) {
+      console.error(`Error while draining project embed queue: ${error.message}`);
     }
   }
 
