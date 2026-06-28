@@ -1,4 +1,11 @@
-import { capture, getItemStatus, getStatus, health, retryItem } from '../shared/api.js';
+import {
+  capture,
+  ensureDefaultConnection,
+  getItemStatus,
+  getStatus,
+  health,
+  retryItem,
+} from '../shared/api.js';
 
 const POLL_INTERVAL_MS = 5000;
 const STORAGE_KEY = 'recallJobQueue';
@@ -288,16 +295,28 @@ async function getFooterStatus() {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  ensurePolling();
-  updateBadge().catch(() => {});
+  ensureDefaultConnection()
+    .catch(() => {})
+    .finally(() => {
+      ensurePolling();
+      updateBadge().catch(() => {});
+    });
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  ensurePolling();
-  updateBadge().catch(() => {});
+  ensureDefaultConnection()
+    .catch(() => {})
+    .finally(() => {
+      ensurePolling();
+      updateBadge().catch(() => {});
+    });
 });
 
-ensurePolling();
+ensureDefaultConnection()
+  .catch(() => {})
+  .finally(() => {
+    ensurePolling();
+  });
 
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === 'quick-save') {

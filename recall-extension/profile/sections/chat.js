@@ -12,33 +12,43 @@ const SUGGESTED_PROMPTS = [
 
 export function mountChatDrawer(container, ctx) {
   container.innerHTML = `
-    <div class="chat-drawer" id="chat-drawer">
-      <button type="button" class="chat-toggle" id="chat-toggle" aria-expanded="false">
-        <span class="chat-toggle-label">Chat with AI to edit anything…</span>
-        <span class="chat-toggle-icon">↑</span>
-      </button>
-
-      <div class="chat-panel" id="chat-panel" hidden>
-        <div class="chat-header">
-          <h3>Career assistant</h3>
-          <button type="button" class="text-btn" id="chat-clear-btn">Clear</button>
+    <div class="chat-sidebar-inner">
+      <header class="chat-sidebar-header">
+        <div class="chat-sidebar-title">
+          <span class="chat-sidebar-icon" aria-hidden="true">✦</span>
+          <div>
+            <h2>Career assistant</h2>
+            <p>Edit profile, projects & resume via chat</p>
+          </div>
         </div>
+        <button type="button" class="text-btn chat-clear-btn" id="chat-clear-btn" title="Clear conversation">Clear</button>
+      </header>
 
-        <div class="chat-suggestions" id="chat-suggestions"></div>
-        <div class="chat-messages" id="chat-messages"></div>
-        <p class="inline-error" id="chat-error" hidden></p>
+      <div class="chat-suggestions" id="chat-suggestions"></div>
 
-        <form class="chat-input-row" id="chat-form">
-          <input type="text" id="chat-input" class="text-input" placeholder="Ask to update your profile, add projects, or analyse a JD…" autocomplete="off" />
-          <button type="submit" class="btn btn-primary" id="chat-send-btn">Send</button>
-        </form>
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-welcome" id="chat-welcome">
+          <p class="chat-welcome-lead">Ask me to update your profile, add projects, or tailor your resume for a role.</p>
+        </div>
       </div>
+
+      <p class="inline-error chat-error" id="chat-error" hidden></p>
+
+      <form class="chat-composer" id="chat-form">
+        <textarea
+          id="chat-input"
+          class="chat-composer-input"
+          rows="2"
+          placeholder="e.g. Add my GitHub URL or analyse this JD…"
+          autocomplete="off"
+        ></textarea>
+        <button type="submit" class="btn btn-primary chat-send-btn" id="chat-send-btn" aria-label="Send message">
+          Send
+        </button>
+      </form>
     </div>
   `;
 
-  const drawer = container.querySelector('#chat-drawer');
-  const toggleBtn = container.querySelector('#chat-toggle');
-  const panel = container.querySelector('#chat-panel');
   const messagesEl = container.querySelector('#chat-messages');
   const suggestionsEl = container.querySelector('#chat-suggestions');
   const errorEl = container.querySelector('#chat-error');
@@ -46,22 +56,8 @@ export function mountChatDrawer(container, ctx) {
   const input = container.querySelector('#chat-input');
   const sendBtn = container.querySelector('#chat-send-btn');
 
-  let expanded = false;
   let messages = [];
   let sending = false;
-
-  function setExpanded(next) {
-    expanded = next;
-    panel.hidden = !expanded;
-    toggleBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    toggleBtn.querySelector('.chat-toggle-icon').textContent = expanded ? '↓' : '↑';
-    drawer.classList.toggle('expanded', expanded);
-
-    if (expanded) {
-      input.focus();
-      renderSuggestions();
-    }
-  }
 
   function setError(message) {
     if (!message) {
@@ -93,27 +89,40 @@ export function mountChatDrawer(container, ctx) {
   }
 
   function renderSuggestions() {
-    if (messages.length > 0) {
+    const show = messages.length === 0;
+
+    if (!show) {
       suggestionsEl.innerHTML = '';
+      suggestionsEl.hidden = true;
       return;
     }
 
-    suggestionsEl.innerHTML = SUGGESTED_PROMPTS.map((prompt) => (
-      `<button type="button" class="chat-suggestion-chip" data-prompt="${escapeHtml(prompt)}">${escapeHtml(prompt)}</button>`
-    )).join('');
+    suggestionsEl.hidden = false;
+    suggestionsEl.innerHTML = `
+      <p class="chat-suggestions-label">Try asking</p>
+      <div class="chat-suggestion-chips">
+        ${SUGGESTED_PROMPTS.map((prompt) => (
+          `<button type="button" class="chat-suggestion-chip" data-prompt="${escapeHtml(prompt)}">${escapeHtml(prompt)}</button>`
+        )).join('')}
+      </div>
+    `;
 
     suggestionsEl.querySelectorAll('.chat-suggestion-chip').forEach((chip) => {
       chip.addEventListener('click', () => {
         input.value = chip.dataset.prompt || '';
         input.focus();
+        autoResizeInput();
       });
     });
   }
 
-  function renderMessages() {
-    messagesEl.innerHTML = '';
+  function autoResizeInput() {
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+  }
 
-    for (const message of messages) {
+  function renderMessages() {
+    const messageNodes = messages.map((message) => {
       const row = document.createElement('div');
       row.className = `chat-message ${message.role}`;
 
@@ -141,7 +150,21 @@ export function mountChatDrawer(container, ctx) {
         row.innerHTML = `<div class="chat-bubble">${escapeHtml(message.content)}</div>`;
       }
 
-      messagesEl.appendChild(row);
+      return row;
+    });
+
+    messagesEl.innerHTML = '';
+    if (messages.length === 0) {
+      const welcome = document.createElement('div');
+      welcome.className = 'chat-welcome';
+      welcome.innerHTML = `
+        <p class="chat-welcome-lead">Ask me to update your profile, add projects, or tailor your resume for a role.</p>
+      `;
+      messagesEl.appendChild(welcome);
+    } else {
+      for (const node of messageNodes) {
+        messagesEl.appendChild(node);
+      }
     }
 
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -210,11 +233,17 @@ export function mountChatDrawer(container, ctx) {
     sending = true;
     sendBtn.disabled = true;
     setError(null);
-    setExpanded(true);
 
     messages.push({ role: 'user', content: text.trim() });
     renderMessages();
     input.value = '';
+    autoResizeInput();
+
+    const thinking = document.createElement('div');
+    thinking.className = 'chat-message assistant chat-thinking';
+    thinking.innerHTML = '<div class="chat-bubble">Thinking…</div>';
+    messagesEl.appendChild(thinking);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
 
     try {
       const payloadMessages = messages
@@ -233,6 +262,8 @@ export function mountChatDrawer(container, ctx) {
       renderMessages();
       await applyRefreshTargets(result.actions_taken || []);
     } catch (error) {
+      thinking.remove();
+
       if (isApiKeyError(error)) {
         setError('Fireworks API key required. Add your key in Settings.');
       } else if (isRateLimitError(error)) {
@@ -248,11 +279,18 @@ export function mountChatDrawer(container, ctx) {
     }
   }
 
-  toggleBtn.addEventListener('click', () => setExpanded(!expanded));
-
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     sendMessage(input.value);
+  });
+
+  input.addEventListener('input', autoResizeInput);
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage(input.value);
+    }
   });
 
   container.querySelector('#chat-clear-btn').addEventListener('click', async () => {

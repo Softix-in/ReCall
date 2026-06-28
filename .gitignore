@@ -1,5 +1,8 @@
 node_modules
 .env
+
+# Extension hosted-backend secrets (copy from shared/defaults.example.js)
+recall-extension/shared/defaults.js
 .DS_Store
 .env.local
 .env.development.local
@@ -35,3 +38,5 @@ backend/.env.production
 
 claude.md 
 cursor.md
+
+recall_key.pem

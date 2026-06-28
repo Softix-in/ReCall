@@ -131,7 +131,7 @@ function mountTabs() {
   tabControllers.projects = mountProjectsTab($('#tab-projects'), ctx);
   tabControllers.resume = mountResumeTab($('#tab-resume'), ctx);
   tabControllers.career = mountCareerTab($('#tab-career'), ctx);
-  tabControllers.chat = mountChatDrawer($('#chat-drawer-root'), ctx);
+  tabControllers.chat = mountChatDrawer($('#chat-sidebar-root'), ctx);
 }
 
 async function init() {

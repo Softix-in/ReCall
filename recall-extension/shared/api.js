@@ -1,14 +1,39 @@
-const DEFAULT_API_BASE = 'http://127.0.0.1:7878';
+import { BUILTIN_API_KEY, BUILTIN_BACKEND_URL } from './defaults.js';
+
+const LOCAL_API_BASE = 'http://127.0.0.1:7878';
 const STORAGE_KEYS = {
   backendUrl: 'recallBackendUrl',
   apiKey: 'recallApiKey',
 };
 
-export const API_BASE = DEFAULT_API_BASE;
+function resolveBackendUrl(storedUrl) {
+  if (storedUrl) {
+    return storedUrl.replace(/\/$/, '');
+  }
+
+  if (BUILTIN_BACKEND_URL) {
+    return BUILTIN_BACKEND_URL.replace(/\/$/, '');
+  }
+
+  return LOCAL_API_BASE;
+}
+
+function resolveApiKey(storedKey) {
+  if (storedKey) {
+    return storedKey;
+  }
+
+  return BUILTIN_API_KEY || '';
+}
+
+export const API_BASE = BUILTIN_BACKEND_URL || LOCAL_API_BASE;
 
 export async function getExtensionConfig() {
   if (typeof chrome === 'undefined' || !chrome.storage?.local) {
-    return { base: DEFAULT_API_BASE, apiKey: '' };
+    return {
+      base: resolveBackendUrl(''),
+      apiKey: resolveApiKey(''),
+    };
   }
 
   const stored = await chrome.storage.local.get([
@@ -16,17 +41,46 @@ export async function getExtensionConfig() {
     STORAGE_KEYS.apiKey,
   ]);
 
-  const base = (stored[STORAGE_KEYS.backendUrl] || DEFAULT_API_BASE).replace(/\/$/, '');
-  const apiKey = stored[STORAGE_KEYS.apiKey] || '';
+  return {
+    base: resolveBackendUrl(stored[STORAGE_KEYS.backendUrl]),
+    apiKey: resolveApiKey(stored[STORAGE_KEYS.apiKey]),
+  };
+}
 
-  return { base, apiKey };
+/** Seed Chrome storage from defaults.js on first install (no Settings step). */
+export async function ensureDefaultConnection() {
+  if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+    return;
+  }
+
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.backendUrl,
+    STORAGE_KEYS.apiKey,
+    'recallDefaultsSeeded',
+  ]);
+
+  if (stored.recallDefaultsSeeded) {
+    return;
+  }
+
+  const payload = { recallDefaultsSeeded: true };
+
+  if (!stored[STORAGE_KEYS.backendUrl] && BUILTIN_BACKEND_URL) {
+    payload[STORAGE_KEYS.backendUrl] = BUILTIN_BACKEND_URL.replace(/\/$/, '');
+  }
+
+  if (!stored[STORAGE_KEYS.apiKey] && BUILTIN_API_KEY) {
+    payload[STORAGE_KEYS.apiKey] = BUILTIN_API_KEY;
+  }
+
+  await chrome.storage.local.set(payload);
 }
 
 export async function saveExtensionConfig({ backendUrl, apiKey }) {
   const payload = {};
 
   if (backendUrl !== undefined) {
-    payload[STORAGE_KEYS.backendUrl] = backendUrl.trim().replace(/\/$/, '') || DEFAULT_API_BASE;
+    payload[STORAGE_KEYS.backendUrl] = backendUrl.trim().replace(/\/$/, '') || resolveBackendUrl('');
   }
 
   if (apiKey !== undefined) {

@@ -1,7 +1,7 @@
 FROM node:20-bookworm-slim AS whisper-build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git cmake build-essential \
+    ca-certificates git cmake build-essential \
     && git clone --depth 1 --branch v1.8.6 https://github.com/ggml-org/whisper.cpp /src/whisper.cpp \
     && cmake -S /src/whisper.cpp -B /src/whisper.cpp/build -DCMAKE_BUILD_TYPE=Release \
     && cmake --build /src/whisper.cpp/build --target whisper-cli -j \
