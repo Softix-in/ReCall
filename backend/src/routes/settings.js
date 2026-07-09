@@ -4,13 +4,18 @@ const { startBackupScheduler } = require('../services/backup-service');
 
 const router = express.Router();
 
-router.get('/settings', (req, res) => {
-  res.json({ settings: getSettings() });
+router.get('/settings', async (req, res) => {
+  try {
+    const settings = await getSettings(req.user.id);
+    res.json({ settings });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-router.put('/settings', (req, res) => {
+router.put('/settings', async (req, res) => {
   try {
-    const settings = saveSettings(req.body || {});
+    const settings = await saveSettings(req.user.id, req.body || {});
     startBackupScheduler();
     res.json({ settings });
   } catch (error) {

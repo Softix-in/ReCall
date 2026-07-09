@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: recall
+      POSTGRES_PASSWORD: recall
+      POSTGRES_DB: recall
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recall -d recall"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:5432:5432"
+
   embed:
     build:
       context: .
@@ -23,6 +40,8 @@ services:
       dockerfile: backend/Dockerfile
     restart: unless-stopped
     depends_on:
+      postgres:
+        condition: service_healthy
       embed:
         condition: service_healthy
     ports:
@@ -31,12 +50,25 @@ services:
       RECALL_HOME: /data/recall
       HOST: 0.0.0.0
       PORT: 7878
+      DATABASE_URL: postgresql://recall:recall@postgres:5432/recall
       EMBED_HOST: embed
       EMBED_PORT: 7879
       EMBED_AUTO_START: "false"
       RECALL_API_KEY: ${RECALL_API_KEY:-}
+      AUTH_LEGACY_API_KEY: ${AUTH_LEGACY_API_KEY:-false}
+      BOOTSTRAP_USER_EMAIL: ${BOOTSTRAP_USER_EMAIL:-bootstrap@recall.local}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
       RECALL_CORS_ORIGINS: ${RECALL_CORS_ORIGINS:-*}
       TRUST_PROXY: ${TRUST_PROXY:-false}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:7878}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      EMAIL_DEV_LOG: ${EMAIL_DEV_LOG:-false}
       PYTHON_BIN: python3
       YTDLP_BIN: yt-dlp
     volumes:
@@ -44,3 +76,4 @@ services:
 
 volumes:
   recall-data:
+  postgres-data:

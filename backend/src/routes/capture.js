@@ -4,9 +4,12 @@ const { createCapture } = require('../services/capture-service');
 function createCaptureRouter(queue) {
   const router = express.Router();
 
-  function handleCapture(req, res) {
+  router.post('/capture', handleCapture);
+  router.post('/link', handleCapture);
+
+  async function handleCapture(req, res) {
     try {
-      const result = createCapture(req.body, queue);
+      const result = await createCapture(req.user.id, req.body, queue);
       res.status(201).json(result);
     } catch (error) {
       const status = error.status || 500;
@@ -16,9 +19,6 @@ function createCaptureRouter(queue) {
       });
     }
   }
-
-  router.post('/capture', handleCapture);
-  router.post('/link', handleCapture);
 
   return router;
 }

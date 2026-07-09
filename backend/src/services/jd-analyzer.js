@@ -107,12 +107,13 @@ Job description excerpt:
 ${jdText.trim().slice(0, 2500)}`;
 }
 
-async function extractJdFields(jdText, { deepMode = false } = {}) {
+async function extractJdFields(jdText, { userId, deepMode = false } = {}) {
   return completeStructured({
+    userId,
     prompt: buildExtractionPrompt(jdText),
     schema: JD_EXTRACTION_SCHEMA,
     schemaName: 'jd_extraction',
-    model: resolveExtractionModel({ deepMode }),
+    model: await resolveExtractionModel({ userId, deepMode }),
   });
 }
 
@@ -169,7 +170,7 @@ function extractJdFieldsRegex(jdText) {
   };
 }
 
-async function scoreProjects(jdText) {
+async function scoreProjects(userId, jdText) {
   let jdEmbedding = null;
 
   try {
@@ -178,7 +179,7 @@ async function scoreProjects(jdText) {
     console.error(`JD embedding failed: ${error.message}`);
   }
 
-  const projects = profileDb.listProjects();
+  const projects = await profileDb.listProjects(userId);
   const projectScores = {};
   const scored = [];
 
@@ -186,7 +187,7 @@ async function scoreProjects(jdText) {
     let score = 0;
 
     if (jdEmbedding) {
-      const projectEmbedding = profileDb.getProjectEmbedding(project.id);
+      const projectEmbedding = await profileDb.getProjectEmbedding(userId, project.id);
       if (projectEmbedding?.length) {
         score = cosineSimilarity(jdEmbedding, projectEmbedding);
       }
@@ -227,8 +228,10 @@ async function scoreProjects(jdText) {
   };
 }
 
-function enrichAnalysis(analysis) {
-  const projectsById = new Map(profileDb.listProjects().map((project) => [project.id, project]));
+async function enrichAnalysis(userId, analysis) {
+  const projectsById = new Map(
+    (await profileDb.listProjects(userId)).map((project) => [project.id, project]),
+  );
 
   const ranked_projects = (analysis.suggested_project_order || []).map((projectId) => {
     const project = projectsById.get(projectId);
@@ -289,6 +292,7 @@ function shouldUseCachedAnalysis(cached, hasApiKey) {
 }
 
 async function rewriteProjectBullets({
+  userId,
   project,
   jdText,
   extraction,
@@ -299,6 +303,7 @@ async function rewriteProjectBullets({
   onBulletStart?.(project.id);
 
   const streamed = await streamCompletion({
+    userId,
     messages: [{ role: 'user', content: buildBulletRewritePrompt({ project, jdText, extraction }) }],
     temperature: 0.35,
     onToken: (token) => onBulletToken?.(project.id, token),
@@ -311,6 +316,7 @@ async function rewriteProjectBullets({
 }
 
 async function analyzeJd({
+  userId,
   jdText,
   streamBullets = false,
   res = null,
@@ -322,14 +328,18 @@ async function analyzeJd({
     throw new LlmError('jd_text is required', { code: 'validation_error', status: 400 });
   }
 
-  const hasApiKey = Boolean(profileDb.getFireworksApiKey());
+  if (!userId) {
+    throw new LlmError('userId is required', { code: 'validation_error', status: 400 });
+  }
+
+  const hasApiKey = Boolean(await profileDb.getFireworksApiKey(userId));
   let keywordOnly = !hasApiKey;
 
   const jd_hash = hashJdText(trimmed);
-  const cached = careerDb.getJdAnalysisByHash(jd_hash);
+  const cached = await careerDb.getJdAnalysisByHash(userId, jd_hash);
 
   if (cached && shouldUseCachedAnalysis(cached, hasApiKey)) {
-    const enriched = enrichAnalysis(cached);
+    const enriched = await enrichAnalysis(userId, cached);
 
     if (streamBullets && res) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -365,7 +375,7 @@ async function analyzeJd({
     extraction = extractJdFieldsRegex(trimmed);
   } else {
     try {
-      extraction = await extractJdFields(trimmed, { deepMode });
+      extraction = await extractJdFields(trimmed, { userId, deepMode });
     } catch (error) {
       if (error instanceof LlmError && error.code === 'invalid_api_key') {
         throw error;
@@ -382,7 +392,7 @@ async function analyzeJd({
   }
 
   emit({ type: 'progress', stage: 'scoring' });
-  const scoring = await scoreProjects(trimmed);
+  const scoring = await scoreProjects(userId, trimmed);
 
   const analysisId = cached?.id || crypto.randomUUID();
   const tailored_bullets = { ...(cached?.tailored_bullets || {}) };
@@ -405,16 +415,16 @@ async function analyzeJd({
     created_at: cached?.created_at || Date.now(),
   };
 
-  careerDb.saveJdAnalysis(baseAnalysis);
+  await careerDb.saveJdAnalysis(userId, baseAnalysis);
 
-  const partial = enrichAnalysis(baseAnalysis);
+  const partial = await enrichAnalysis(userId, baseAnalysis);
   emit({ type: 'analysis', analysis: partial });
 
-  const projects = profileDb.listProjects();
+  const projects = await profileDb.listProjects(userId);
 
   if (projects.length === 0 || keywordOnly) {
-    const finalAnalysis = enrichAnalysis({
-      ...careerDb.getJdAnalysisById(analysisId),
+    const finalAnalysis = await enrichAnalysis(userId, {
+      ...(await careerDb.getJdAnalysisById(userId, analysisId)),
       keyword_only: keywordOnly,
     });
     emit({ type: 'done', analysis: finalAnalysis });
@@ -433,6 +443,7 @@ async function analyzeJd({
 
   for (const project of topProjects) {
     const rewritten = await rewriteProjectBullets({
+      userId,
       project,
       jdText: trimmed,
       extraction,
@@ -442,11 +453,11 @@ async function analyzeJd({
     });
 
     tailored_bullets[project.id] = rewritten;
-    careerDb.updateJdAnalysisTailoredBullets(analysisId, tailored_bullets);
+    await careerDb.updateJdAnalysisTailoredBullets(userId, analysisId, tailored_bullets);
   }
 
-  const finalRow = careerDb.getJdAnalysisById(analysisId);
-  const finalAnalysis = enrichAnalysis(finalRow);
+  const finalRow = await careerDb.getJdAnalysisById(userId, analysisId);
+  const finalAnalysis = await enrichAnalysis(userId, finalRow);
   emit({ type: 'done', analysis: finalAnalysis });
 
   if (streamBullets && res) {

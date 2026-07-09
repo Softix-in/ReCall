@@ -7,17 +7,23 @@ class ProjectEmbedQueue {
     this.shuttingDown = false;
   }
 
-  addJob(projectId) {
-    if (this.shuttingDown || !projectId) {
+  jobKey({ userId, projectId }) {
+    return `${userId}:${projectId}`;
+  }
+
+  addJob({ userId, projectId }) {
+    if (this.shuttingDown || !userId || !projectId) {
       return;
     }
 
-    if (this.pending.has(projectId)) {
+    const key = this.jobKey({ userId, projectId });
+
+    if (this.pending.has(key)) {
       return;
     }
 
-    this.pending.add(projectId);
-    this.queue.push(projectId);
+    this.pending.add(key);
+    this.queue.push({ userId, projectId });
     this.processNext();
   }
 
@@ -27,14 +33,14 @@ class ProjectEmbedQueue {
     }
 
     this.running = true;
-    const projectId = this.queue.shift();
+    const job = this.queue.shift();
 
     try {
-      await this.worker(projectId);
+      await this.worker(job);
     } catch (error) {
-      console.error(`Project embedding failed for ${projectId}: ${error.message}`);
+      console.error(`Project embedding failed for ${job.projectId}: ${error.message}`);
     } finally {
-      this.pending.delete(projectId);
+      this.pending.delete(this.jobKey(job));
       this.running = false;
       this.processNext();
     }

@@ -45,12 +45,12 @@ async function fetchArticleContent(url, itemId) {
   }
 }
 
-async function fetchVideoContent(url, itemId) {
+async function fetchVideoContent(url, itemId, userId) {
   let audioPath = null;
 
   try {
     audioPath = await downloadAudio(url, itemId);
-    const transcript = await transcribeAudio(audioPath, itemId);
+    const transcript = await transcribeAudio(audioPath, itemId, userId);
     const og = await fetchOgMetadata(url, itemId);
 
     return {
@@ -102,10 +102,10 @@ async function fetchPdfAsContent(url) {
   };
 }
 
-async function fetchBySourceType(sourceType, url, itemId) {
+async function fetchBySourceType(sourceType, url, itemId, userId) {
   switch (sourceType) {
     case 'video':
-      return fetchVideoContent(url, itemId);
+      return fetchVideoContent(url, itemId, userId);
     case 'article':
       return fetchArticleContent(url, itemId);
     case 'social-post':

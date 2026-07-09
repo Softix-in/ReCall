@@ -30,8 +30,8 @@ const TAILORED_RESUME_SCHEMA = {
 
 const RESUME_TEMPLATE_PATH = path.join(__dirname, '../templates/resume.html');
 
-function ensureApiKey() {
-  if (!profileDb.getFireworksApiKey()) {
+async function ensureApiKey(userId) {
+  if (!(await profileDb.getFireworksApiKey(userId))) {
     throw new LlmError('Fireworks API key is not configured', {
       code: 'missing_api_key',
       status: 400,
@@ -155,19 +155,20 @@ function buildResumeLabel(jdAnalysis) {
 }
 
 async function buildTailoredResume({
+  userId,
   jd_analysis_id: jdAnalysisId,
   selected_project_ids: selectedProjectIds = [],
 }) {
-  ensureApiKey();
+  await ensureApiKey(userId);
 
-  const jdAnalysis = careerDb.getJdAnalysisById(jdAnalysisId);
+  const jdAnalysis = await careerDb.getJdAnalysisById(userId, jdAnalysisId);
   if (!jdAnalysis) {
     throw new LlmError('JD analysis not found', { code: 'not_found', status: 404 });
   }
 
-  const masterResume = careerDb.getMasterResume();
-  const profile = profileDb.getProfile();
-  const allProjects = profileDb.listProjects();
+  const masterResume = await careerDb.getMasterResume(userId);
+  const profile = await profileDb.getProfile(userId);
+  const allProjects = await profileDb.listProjects(userId);
   const order = selectedProjectIds.length
     ? selectedProjectIds
     : (jdAnalysis.suggested_project_order || []);
@@ -186,6 +187,7 @@ async function buildTailoredResume({
     .filter(Boolean);
 
   const llmResult = await completeStructured({
+    userId,
     prompt: buildTailoringPrompt({
       profile,
       masterResume: masterResume || { experience: [], education: [], certifications: [] },
@@ -200,7 +202,7 @@ async function buildTailoredResume({
   const education = masterResume?.education || [];
   const certifications = masterResume?.certifications || [];
 
-  const saved = careerDb.createTailoredResume({
+  const saved = await careerDb.createTailoredResume(userId, {
     label: buildResumeLabel(jdAnalysis),
     jd_analysis_id: jdAnalysisId,
     summary: llmResult.summary || '',
@@ -420,14 +422,14 @@ async function renderPdf(html) {
   }
 }
 
-async function exportResume({ resume_id: resumeId, format = 'json' }) {
-  const resume = normalizeResumeRecord(careerDb.getResumeById(resumeId));
+async function exportResume({ userId, resume_id: resumeId, format = 'json' }) {
+  const resume = normalizeResumeRecord(await careerDb.getResumeById(userId, resumeId));
 
   if (!resume) {
     throw new LlmError('Resume not found', { code: 'not_found', status: 404 });
   }
 
-  const profile = profileDb.getProfile();
+  const profile = await profileDb.getProfile(userId);
   const plain_text = renderPlainText(profile, resume);
   const html = renderHtml(profile, resume);
 
@@ -457,13 +459,18 @@ async function exportResume({ resume_id: resumeId, format = 'json' }) {
 
 async function buildOrExportResume(input) {
   const format = input.format || 'json';
+  const userId = input.userId;
 
-  if (input.resume_id && !input.jd_analysis_id) {
-    return exportResume({ resume_id: input.resume_id, format });
+  if (!userId) {
+    throw new LlmError('userId is required', { code: 'validation_error', status: 400 });
   }
 
-  const built = await buildTailoredResume(input);
-  const exported = await exportResume({ resume_id: built.resume.id, format });
+  if (input.resume_id && !input.jd_analysis_id) {
+    return exportResume({ userId, resume_id: input.resume_id, format });
+  }
+
+  const built = await buildTailoredResume({ ...input, userId });
+  const exported = await exportResume({ userId, resume_id: built.resume.id, format });
 
   return {
     ...exported,

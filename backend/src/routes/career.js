@@ -27,6 +27,7 @@ function createCareerRouter({ projectEmbedQueue } = {}) {
       }
 
       const analysis = await analyzeJd({
+        userId: req.user.id,
         jdText,
         streamBullets,
         res: streamBullets ? res : null,
@@ -53,9 +54,9 @@ function createCareerRouter({ projectEmbedQueue } = {}) {
     }
   });
 
-  router.get('/career/analyses', (req, res) => {
+  router.get('/career/analyses', async (req, res) => {
     try {
-      const analyses = careerDb.listJdAnalyses();
+      const analyses = await careerDb.listJdAnalyses(req.user.id);
       res.json({ analyses });
     } catch (error) {
       console.error('GET /career/analyses failed:', error);
@@ -63,16 +64,16 @@ function createCareerRouter({ projectEmbedQueue } = {}) {
     }
   });
 
-  router.get('/career/analyses/:id', (req, res) => {
+  router.get('/career/analyses/:id', async (req, res) => {
     try {
-      const analysis = careerDb.getJdAnalysisById(req.params.id);
+      const analysis = await careerDb.getJdAnalysisById(req.user.id, req.params.id);
 
       if (!analysis) {
         res.status(404).json({ error: 'Analysis not found' });
         return;
       }
 
-      res.json({ analysis: enrichAnalysis(analysis) });
+      res.json({ analysis: await enrichAnalysis(req.user.id, analysis) });
     } catch (error) {
       console.error('GET /career/analyses/:id failed:', error);
       res.status(500).json({ error: 'Failed to load analysis', detail: error.message });
@@ -97,6 +98,7 @@ function createCareerRouter({ projectEmbedQueue } = {}) {
       }
 
       const result = await buildOrExportResume({
+        userId: req.user.id,
         resume_id: resumeId,
         jd_analysis_id: jdAnalysisId,
         selected_project_ids: Array.isArray(body.selected_project_ids) ? body.selected_project_ids : [],
@@ -137,7 +139,7 @@ function createCareerRouter({ projectEmbedQueue } = {}) {
 
   router.post('/career/generate/bio', async (req, res) => {
     try {
-      const result = await generateBio(req.body || {});
+      const result = await generateBio({ userId: req.user.id, ...req.body });
       res.json(result);
     } catch (error) {
       if (handleLlmError(res, error)) {
@@ -151,7 +153,7 @@ function createCareerRouter({ projectEmbedQueue } = {}) {
 
   router.post('/career/generate/pitch', async (req, res) => {
     try {
-      const result = await generatePitch(req.body || {});
+      const result = await generatePitch({ userId: req.user.id, ...req.body });
       res.json(result);
     } catch (error) {
       if (handleLlmError(res, error)) {
@@ -166,6 +168,7 @@ function createCareerRouter({ projectEmbedQueue } = {}) {
   router.post('/career/generate/cover-letter', async (req, res) => {
     try {
       await generateCoverLetter({
+        userId: req.user.id,
         jd_analysis_id: req.body?.jd_analysis_id,
         tone: req.body?.tone,
         res,
@@ -191,7 +194,7 @@ function createCareerRouter({ projectEmbedQueue } = {}) {
         return;
       }
 
-      const result = await handleChat(messages, { projectEmbedQueue });
+      const result = await handleChat(messages, { userId: req.user.id, projectEmbedQueue });
       res.json(result);
     } catch (error) {
       if (handleLlmError(res, error)) {

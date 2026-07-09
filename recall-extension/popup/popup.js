@@ -3,9 +3,12 @@ import {
   deleteItem,
   getFailedJobs,
   getSearchRecommendations,
+  isAuthError,
   retryItem,
   search,
 } from '../shared/api.js';
+import { getLoginUrl, requireAuth } from '../shared/auth-gate.js';
+import { getSession } from '../shared/auth.js';
 import { createLiveSearchRunner } from '../shared/live-search.js';
 import { bindSuggestionChips, renderSuggestionChips } from '../shared/search-render.js';
 import {
@@ -266,6 +269,18 @@ async function loadFailedJobs() {
   }
 }
 
+async function refreshUserEmail() {
+  const session = await getSession();
+  const emailEl = $('#user-email');
+
+  if (session.user?.email) {
+    emailEl.textContent = session.user.email;
+    emailEl.hidden = false;
+  } else {
+    emailEl.hidden = true;
+  }
+}
+
 async function refreshFooter() {
   const response = await sendMessage({ type: 'GET_FOOTER_STATUS' });
 
@@ -510,6 +525,11 @@ function bindEvents() {
     const response = await sendMessage({ type: 'QUICK_SAVE' });
     $('#quick-save-btn').disabled = false;
 
+    if (response?.authRequired) {
+      window.location.replace(getLoginUrl());
+      return;
+    }
+
     if (!response?.ok) {
       showToast(response?.error || 'Quick save failed', 'error');
       return;
@@ -525,6 +545,12 @@ function bindEvents() {
     const note = $('#capture-note').value;
 
     const response = await sendMessage({ type: 'SAVE_WITH_NOTE', note });
+
+    if (response?.authRequired) {
+      window.location.replace(getLoginUrl());
+      return;
+    }
+
     if (!response?.ok) {
       showToast(response?.error || 'Save failed', 'error');
       return;
@@ -603,17 +629,39 @@ function bindEvents() {
       refreshQueueStatus();
       refreshFooter();
     }
+
+    if (message.type === 'AUTH_REQUIRED') {
+      showToast('Session expired — sign in again', 'error');
+      window.location.replace(getLoginUrl());
+    }
   });
 }
 
 bindEvents();
-loadActiveTabScrape();
-sendMessage({ type: 'PRUNE_QUEUE' }).then(() => refreshQueueStatus());
-refreshFooter();
-loadFailedJobs();
 
-setInterval(() => {
-  refreshQueueStatus();
-  refreshFooter();
-  loadFailedJobs();
-}, 5000);
+async function start() {
+  if (!(await requireAuth())) {
+    return;
+  }
+
+  await refreshUserEmail();
+  loadActiveTabScrape();
+  await sendMessage({ type: 'PRUNE_QUEUE' });
+  await refreshQueueStatus();
+  await refreshFooter();
+  await loadFailedJobs();
+
+  setInterval(() => {
+    refreshQueueStatus();
+    refreshFooter();
+    loadFailedJobs();
+  }, 5000);
+}
+
+start().catch((error) => {
+  if (isAuthError(error)) {
+    return;
+  }
+
+  console.error('Popup failed to start:', error);
+});

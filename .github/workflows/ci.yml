@@ -11,6 +11,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: recall
+          POSTGRES_PASSWORD: recall
+          POSTGRES_DB: recall
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U recall -d recall"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://recall:recall@localhost:5432/recall
+      AUTH_LEGACY_API_KEY: "false"
+
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +46,17 @@ jobs:
           cache-dependency-path: |
             recall-embed/requirements.txt
             recall-tray/requirements.txt
+
+      - name: Generate JWT keys
+        run: |
+          openssl genrsa -out jwt-private.pem 2048
+          openssl rsa -in jwt-private.pem -pubout -out jwt-public.pem
+          echo "JWT_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
+          cat jwt-private.pem >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo "JWT_PUBLIC_KEY<<EOF" >> $GITHUB_ENV
+          cat jwt-public.pem >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Install backend dependencies
         working-directory: backend
@@ -71,8 +101,7 @@ jobs:
       - name: Run phase tests
         working-directory: backend
         run: |
-          npm run test:phase1
-          npm run test:phase5
+          npm run test:phase2-auth
 
       - name: Upload daemon log on failure
         if: failure()

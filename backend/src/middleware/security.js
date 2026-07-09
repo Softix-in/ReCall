@@ -1,4 +1,5 @@
 const config = require('../config');
+const { createAuthMiddleware } = require('./auth');
 
 function parseCorsOrigins(value) {
   if (!value || value === '*') {
@@ -30,40 +31,7 @@ function corsMiddleware(req, res, next) {
   next();
 }
 
-function extractApiKey(req) {
-  const headerKey = req.headers['x-recall-api-key'];
-  if (typeof headerKey === 'string' && headerKey.trim()) {
-    return headerKey.trim();
-  }
-
-  const auth = req.headers.authorization;
-  if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
-    return auth.slice('Bearer '.length).trim();
-  }
-
-  return null;
-}
-
-function authMiddleware(req, res, next) {
-  if (!config.API_KEY) {
-    next();
-    return;
-  }
-
-  if (req.path === '/health') {
-    next();
-    return;
-  }
-
-  const provided = extractApiKey(req);
-
-  if (provided && provided === config.API_KEY) {
-    next();
-    return;
-  }
-
-  res.status(401).json({ error: 'Unauthorized — invalid or missing API key' });
-}
+const authMiddleware = createAuthMiddleware();
 
 module.exports = {
   corsMiddleware,

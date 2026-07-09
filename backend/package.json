@@ -1,6 +1,6 @@
 {
   "name": "backend",
-  "version": "0.6.0",
+  "version": "0.7.1",
   "description": "recall local backend daemon",
   "main": "src/server.js",
   "scripts": {
@@ -10,6 +10,8 @@
     "inspect-db": "node scripts/inspect-db.js",
     "test:phase1": "node scripts/test-phase1.js",
     "test:phase2": "node scripts/test-phase2.js",
+    "test:phase2-auth": "node scripts/test-phase2-auth.js",
+    "test:account-mgmt": "node scripts/test-account-mgmt.js",
     "test:phase3": "node scripts/test-phase3.js",
     "test:phase4": "node scripts/test-phase4.js",
     "test:phase5": "node scripts/test-phase5.js",
@@ -22,18 +24,27 @@
     "test:identity-career-step5": "node scripts/test-identity-career-step5.js",
     "test:identity-career": "node scripts/test-identity-career-step1.js && node scripts/test-identity-career-step3.js && node scripts/test-identity-career-step4.js && node scripts/test-identity-career-step5.js",
     "backfill:embeddings": "node scripts/backfill-embeddings.js",
+    "migrate:sqlite-to-postgres": "node scripts/migrate-sqlite-to-postgres.js",
+    "set-bootstrap-password": "node scripts/set-bootstrap-password.js",
     "setup:embed": "powershell -ExecutionPolicy Bypass -File scripts/setup-embed.ps1"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.750.0",
     "@mozilla/readability": "^0.5.0",
-    "better-sqlite3": "^11.7.0",
+    "bcrypt": "^5.1.1",
     "cheerio": "^1.0.0",
     "express": "^4.21.0",
+    "express-rate-limit": "^8.2.1",
     "jsdom": "^25.0.1",
+    "jsonwebtoken": "^9.0.2",
     "node-cron": "^4.2.1",
+    "nodemailer": "^6.10.1",
     "openai": "^6.45.0",
     "pdf-parse": "^2.4.5",
-    "puppeteer": "^24.36.1",
-    "express-rate-limit": "^8.2.1"
+    "pg": "^8.13.3",
+    "puppeteer": "^24.36.1"
+  },
+  "devDependencies": {
+    "better-sqlite3": "^11.7.0"
   }
 }

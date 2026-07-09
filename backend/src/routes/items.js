@@ -1,7 +1,4 @@
-const fs = require('fs');
-const path = require('path');
 const express = require('express');
-const config = require('../config');
 const itemsDb = require('../db/items');
 const {
   deleteItemFully,
@@ -9,38 +6,35 @@ const {
   countTestItems,
 } = require('../services/item-deletion-service');
 const { exportItems } = require('../services/export-service');
+const { readTranscriptContent } = require('../services/object-storage');
 
 const router = express.Router();
 
-function readTranscriptText(relativePath) {
-  if (!relativePath) {
-    return null;
+router.get('/items', async (req, res) => {
+  try {
+    const items = await itemsDb.listItems(req.user.id, {
+      limit: req.query.limit,
+      sort: req.query.sort || 'created_at',
+    });
+
+    res.json({ items });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
-
-  const absolutePath = path.join(config.RECALL_HOME, relativePath);
-
-  if (!fs.existsSync(absolutePath)) {
-    return null;
-  }
-
-  return fs.readFileSync(absolutePath, 'utf8');
-}
-
-router.get('/items', (req, res) => {
-  const limit = req.query.limit;
-  const sort = req.query.sort || 'created_at';
-
-  const items = itemsDb.listItems({ limit, sort });
-  res.json({ items });
 });
 
-router.get('/items/test-data/count', (req, res) => {
-  res.json({ count: countTestItems() });
+router.get('/items/test-data/count', async (req, res) => {
+  try {
+    const count = await countTestItems(req.user.id);
+    res.json({ count });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 router.post('/items/clear-test-data', async (req, res) => {
   try {
-    const result = await clearTestItems();
+    const result = await clearTestItems(req.user.id);
     res.json({ ok: true, ...result });
   } catch (error) {
     console.error('Clear test data failed:', error);
@@ -48,54 +42,71 @@ router.post('/items/clear-test-data', async (req, res) => {
   }
 });
 
-router.get('/items/:id', (req, res) => {
-  const item = itemsDb.getItemById(req.params.id);
+router.get('/items/:id', async (req, res) => {
+  try {
+    const item = await itemsDb.getItemById(req.user.id, req.params.id);
 
-  if (!item) {
-    res.status(404).json({ error: 'Item not found' });
-    return;
+    if (!item) {
+      res.status(404).json({ error: 'Item not found' });
+      return;
+    }
+
+    const includeTranscript = req.query.include_transcript === '1';
+
+    res.json({
+      item: {
+        ...item,
+        transcript_text: includeTranscript ? await readTranscriptContent(item) : undefined,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
-
-  const includeTranscript = req.query.include_transcript === '1';
-
-  res.json({
-    item: {
-      ...item,
-      transcript_text: includeTranscript ? readTranscriptText(item.transcript) : undefined,
-    },
-  });
 });
 
-router.get('/items/:id/tags', (req, res) => {
-  const item = itemsDb.getItemById(req.params.id);
-  if (!item) {
-    res.status(404).json({ error: 'Item not found' });
-    return;
+router.get('/items/:id/tags', async (req, res) => {
+  try {
+    const item = await itemsDb.getItemById(req.user.id, req.params.id);
+
+    if (!item) {
+      res.status(404).json({ error: 'Item not found' });
+      return;
+    }
+
+    const tags = item.tags ? item.tags.split(',').map((t) => t.trim()).filter(Boolean) : [];
+    res.json({ tags });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
-  const tags = item.tags ? item.tags.split(',').map((t) => t.trim()).filter(Boolean) : [];
-  res.json({ tags });
 });
 
-router.put('/items/:id/tags', (req, res) => {
-  const item = itemsDb.getItemById(req.params.id);
-  if (!item) {
-    res.status(404).json({ error: 'Item not found' });
-    return;
+router.put('/items/:id/tags', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const item = await itemsDb.getItemById(userId, req.params.id);
+
+    if (!item) {
+      res.status(404).json({ error: 'Item not found' });
+      return;
+    }
+
+    const { tags } = req.body;
+
+    if (!Array.isArray(tags)) {
+      res.status(400).json({ error: 'tags must be an array of strings' });
+      return;
+    }
+
+    const clean = tags
+      .map((t) => String(t).trim().toLowerCase().replace(/[^a-z0-9-_ ]/g, ''))
+      .filter(Boolean)
+      .slice(0, 20);
+
+    const updated = await itemsDb.updateItem(userId, req.params.id, { tags: clean.join(',') });
+    res.json({ tags: clean, item: updated });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
-
-  const { tags } = req.body;
-  if (!Array.isArray(tags)) {
-    res.status(400).json({ error: 'tags must be an array of strings' });
-    return;
-  }
-
-  const clean = tags
-    .map((t) => String(t).trim().toLowerCase().replace(/[^a-z0-9-_ ]/g, ''))
-    .filter(Boolean)
-    .slice(0, 20);
-
-  const updated = itemsDb.updateItem(req.params.id, { tags: clean.join(',') });
-  res.json({ tags: clean, item: updated });
 });
 
 router.get('/export', async (req, res) => {
@@ -103,7 +114,7 @@ router.get('/export', async (req, res) => {
   const type = req.query.type || null;
 
   try {
-    const { content, filename, contentType } = await exportItems({ format, type });
+    const { content, filename, contentType } = await exportItems(req.user.id, { format, type });
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Type', contentType);
     res.send(content);
@@ -114,7 +125,7 @@ router.get('/export', async (req, res) => {
 
 router.delete('/items/:id', async (req, res) => {
   try {
-    const result = await deleteItemFully(req.params.id);
+    const result = await deleteItemFully(req.user.id, req.params.id);
     res.json({ ok: true, ...result });
   } catch (error) {
     const status = error.status || 500;

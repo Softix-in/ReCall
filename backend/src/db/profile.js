@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const config = require('../config');
-const { getDb } = require('./connection');
+const { withUserContext, formatVector } = require('./pg-pool');
 const { decrypt } = require('../utils/crypto-util');
 const { parseJsonArray, stringifyJson } = require('./json-fields');
 
@@ -61,8 +61,8 @@ function rowToProfile(row, { includeSecrets = false } = {}) {
     ai_reasoning_model: row.ai_reasoning_model || DEFAULT_AI_REASONING_MODEL,
     ai_deep_analysis_enabled: Boolean(row.ai_deep_analysis_enabled),
     has_fireworks_api_key: Boolean(row.fireworks_api_key_enc),
-    created_at: row.created_at,
-    updated_at: row.updated_at,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
   };
 
   if (includeSecrets) {
@@ -91,8 +91,8 @@ function rowToProject(row) {
     is_featured: Boolean(row.is_featured),
     sort_order: row.sort_order ?? 0,
     has_embedding: Boolean(row.embedding),
-    created_at: row.created_at,
-    updated_at: row.updated_at,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
   };
 }
 
@@ -117,12 +117,18 @@ function emptyProfileDefaults() {
   };
 }
 
-function getProfileRow() {
-  return getDb().prepare('SELECT * FROM user_profile ORDER BY created_at ASC LIMIT 1').get();
+async function getProfileRow(userId) {
+  return withUserContext(userId, async (client) => {
+    const result = await client.query(
+      'SELECT * FROM user_profile WHERE user_id = $1 LIMIT 1',
+      [userId],
+    );
+    return result.rows[0] ?? null;
+  });
 }
 
-function getOrCreateProfile() {
-  const existing = getProfileRow();
+async function getOrCreateProfile(userId) {
+  const existing = await getProfileRow(userId);
   if (existing) {
     return rowToProfile(existing);
   }
@@ -130,25 +136,33 @@ function getOrCreateProfile() {
   const id = crypto.randomUUID();
   const now = Date.now();
 
-  getDb().prepare(`
-    INSERT INTO user_profile (
-      id, created_at, updated_at,
-      ai_quality_model, ai_chat_model, ai_reasoning_model, ai_deep_analysis_enabled
-    ) VALUES (?, ?, ?, ?, ?, ?, 0)
-  `).run(
-    id,
-    now,
-    now,
-    DEFAULT_AI_QUALITY_MODEL,
-    DEFAULT_AI_CHAT_MODEL,
-    DEFAULT_AI_REASONING_MODEL,
-  );
+  return withUserContext(userId, async (client) => {
+    await client.query(
+      `INSERT INTO user_profile (
+        id, user_id, created_at, updated_at,
+        ai_quality_model, ai_chat_model, ai_reasoning_model, ai_deep_analysis_enabled
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, false)`,
+      [
+        id,
+        userId,
+        now,
+        now,
+        DEFAULT_AI_QUALITY_MODEL,
+        DEFAULT_AI_CHAT_MODEL,
+        DEFAULT_AI_REASONING_MODEL,
+      ],
+    );
 
-  return rowToProfile(getProfileRow());
+    const result = await client.query(
+      'SELECT * FROM user_profile WHERE user_id = $1 LIMIT 1',
+      [userId],
+    );
+    return rowToProfile(result.rows[0]);
+  });
 }
 
-function getProfile({ includeSecrets = false } = {}) {
-  const row = getProfileRow();
+async function getProfile(userId, { includeSecrets = false } = {}) {
+  const row = await getProfileRow(userId);
   if (!row) {
     return emptyProfileDefaults();
   }
@@ -156,182 +170,258 @@ function getProfile({ includeSecrets = false } = {}) {
   return rowToProfile(row, { includeSecrets });
 }
 
-function updateProfile(fields) {
-  const profile = getOrCreateProfile();
+async function updateProfile(userId, fields) {
+  const profile = await getOrCreateProfile(userId);
   const keys = Object.keys(fields).filter((key) => PROFILE_UPDATABLE.has(key));
 
   if (keys.length === 0) {
-    return getProfile();
+    return getProfile(userId);
   }
 
-  const params = { id: profile.id, updated_at: Date.now() };
-  const assignments = ['updated_at = @updated_at'];
+  const values = [profile.id, userId];
+  const assignments = keys.map((key, index) => {
+    const paramIndex = index + 3;
 
-  for (const key of keys) {
-    assignments.push(`${key} = @${key}`);
-    params[key] = key === 'skills' ? stringifyJson(fields[key] ?? []) : (fields[key] ?? null);
-  }
+    if (key === 'skills') {
+      values.push(stringifyJson(fields[key] ?? []));
+      return `${key} = $${paramIndex}::jsonb`;
+    }
 
-  getDb().prepare(`UPDATE user_profile SET ${assignments.join(', ')} WHERE id = @id`).run(params);
-  return getProfile();
+    values.push(fields[key] ?? null);
+    return `${key} = $${paramIndex}`;
+  });
+
+  const updatedAtIndex = keys.length + 3;
+  assignments.push(`updated_at = $${updatedAtIndex}`);
+  values.push(Date.now());
+
+  await withUserContext(userId, async (client) => {
+    await client.query(
+      `UPDATE user_profile SET ${assignments.join(', ')} WHERE id = $1 AND user_id = $2`,
+      values,
+    );
+  });
+
+  return getProfile(userId);
 }
 
-function updateAiSettings(fields) {
-  const profile = getOrCreateProfile();
+async function updateAiSettings(userId, fields) {
+  const profile = await getOrCreateProfile(userId);
   const keys = Object.keys(fields).filter((key) => AI_SETTINGS_UPDATABLE.has(key));
 
   if (keys.length === 0) {
-    return getProfile();
+    return getProfile(userId);
   }
 
-  const params = { id: profile.id, updated_at: Date.now() };
-  const assignments = ['updated_at = @updated_at'];
-
-  for (const key of keys) {
-    assignments.push(`${key} = @${key}`);
+  const values = [profile.id, userId];
+  const assignments = keys.map((key, index) => {
+    const paramIndex = index + 3;
 
     if (key === 'ai_deep_analysis_enabled') {
-      params[key] = fields[key] ? 1 : 0;
+      values.push(Boolean(fields[key]));
     } else {
-      params[key] = fields[key] ?? null;
+      values.push(fields[key] ?? null);
     }
-  }
 
-  getDb().prepare(`UPDATE user_profile SET ${assignments.join(', ')} WHERE id = @id`).run(params);
-  return getProfile();
-}
-
-function listProjects() {
-  const rows = getDb().prepare(`
-    SELECT * FROM projects
-    ORDER BY sort_order ASC, created_at ASC
-  `).all();
-
-  return rows.map(rowToProject);
-}
-
-function getProjectById(id) {
-  const row = getDb().prepare('SELECT * FROM projects WHERE id = ?').get(id);
-  return rowToProject(row);
-}
-
-function getProjectEmbedding(id) {
-  const row = getDb().prepare('SELECT embedding FROM projects WHERE id = ?').get(id);
-  if (!row?.embedding) {
-    return null;
-  }
-
-  return parseJsonArray(row.embedding);
-}
-
-function getNextProjectSortOrder() {
-  const row = getDb().prepare('SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM projects').get();
-  return (row?.max_order ?? -1) + 1;
-}
-
-function createProject(input) {
-  const id = crypto.randomUUID();
-  const now = Date.now();
-  const sortOrder = input.sort_order ?? getNextProjectSortOrder();
-
-  getDb().prepare(`
-    INSERT INTO projects (
-      id, name, tagline, description, tech_stack, impact_bullets,
-      github_url, live_url, start_date, end_date, is_featured, sort_order,
-      created_at, updated_at
-    ) VALUES (
-      @id, @name, @tagline, @description, @tech_stack, @impact_bullets,
-      @github_url, @live_url, @start_date, @end_date, @is_featured, @sort_order,
-      @created_at, @updated_at
-    )
-  `).run({
-    id,
-    name: input.name,
-    tagline: input.tagline ?? null,
-    description: input.description ?? null,
-    tech_stack: stringifyJson(input.tech_stack ?? []),
-    impact_bullets: stringifyJson(input.impact_bullets ?? []),
-    github_url: input.github_url ?? null,
-    live_url: input.live_url ?? null,
-    start_date: input.start_date ?? null,
-    end_date: input.end_date ?? null,
-    is_featured: input.is_featured ? 1 : 0,
-    sort_order: sortOrder,
-    created_at: now,
-    updated_at: now,
+    return `${key} = $${paramIndex}`;
   });
 
-  return getProjectById(id);
+  const updatedAtIndex = keys.length + 3;
+  assignments.push(`updated_at = $${updatedAtIndex}`);
+  values.push(Date.now());
+
+  await withUserContext(userId, async (client) => {
+    await client.query(
+      `UPDATE user_profile SET ${assignments.join(', ')} WHERE id = $1 AND user_id = $2`,
+      values,
+    );
+  });
+
+  return getProfile(userId);
 }
 
-function updateProject(id, fields) {
+async function listProjects(userId) {
+  return withUserContext(userId, async (client) => {
+    const result = await client.query(
+      `SELECT * FROM projects
+       WHERE user_id = $1
+       ORDER BY sort_order ASC, created_at ASC`,
+      [userId],
+    );
+
+    return result.rows.map(rowToProject);
+  });
+}
+
+async function getProjectById(userId, id) {
+  return withUserContext(userId, async (client) => {
+    const result = await client.query(
+      'SELECT * FROM projects WHERE id = $1 AND user_id = $2',
+      [id, userId],
+    );
+    return rowToProject(result.rows[0]);
+  });
+}
+
+async function getProjectEmbedding(userId, id) {
+  return withUserContext(userId, async (client) => {
+    const result = await client.query(
+      'SELECT embedding FROM projects WHERE id = $1 AND user_id = $2',
+      [id, userId],
+    );
+
+    if (!result.rows[0]?.embedding) {
+      return null;
+    }
+
+    return parseJsonArray(result.rows[0].embedding);
+  });
+}
+
+async function getNextProjectSortOrder(userId, client) {
+  const result = await client.query(
+    'SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM projects WHERE user_id = $1',
+    [userId],
+  );
+  return (result.rows[0]?.max_order ?? -1) + 1;
+}
+
+async function createProject(userId, input) {
+  const id = crypto.randomUUID();
+  const now = Date.now();
+
+  return withUserContext(userId, async (client) => {
+    const sortOrder = input.sort_order ?? await getNextProjectSortOrder(userId, client);
+
+    await client.query(
+      `INSERT INTO projects (
+        id, user_id, name, tagline, description, tech_stack, impact_bullets,
+        github_url, live_url, start_date, end_date, is_featured, sort_order,
+        created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb,
+        $8, $9, $10, $11, $12, $13,
+        $14, $15
+      )`,
+      [
+        id,
+        userId,
+        input.name,
+        input.tagline ?? null,
+        input.description ?? null,
+        stringifyJson(input.tech_stack ?? []),
+        stringifyJson(input.impact_bullets ?? []),
+        input.github_url ?? null,
+        input.live_url ?? null,
+        input.start_date ?? null,
+        input.end_date ?? null,
+        Boolean(input.is_featured),
+        sortOrder,
+        now,
+        now,
+      ],
+    );
+
+    const result = await client.query(
+      'SELECT * FROM projects WHERE id = $1 AND user_id = $2',
+      [id, userId],
+    );
+    return rowToProject(result.rows[0]);
+  });
+}
+
+async function updateProject(userId, id, fields) {
   const keys = Object.keys(fields).filter((key) => PROJECT_UPDATABLE.has(key));
 
   if (keys.length === 0) {
-    return getProjectById(id);
+    return getProjectById(userId, id);
   }
 
-  const params = { id, updated_at: Date.now() };
-  const assignments = ['updated_at = @updated_at'];
-
-  for (const key of keys) {
-    assignments.push(`${key} = @${key}`);
+  const values = [id, userId];
+  const assignments = keys.map((key, index) => {
+    const paramIndex = index + 3;
 
     if (key === 'tech_stack' || key === 'impact_bullets') {
-      params[key] = stringifyJson(fields[key] ?? []);
-    } else if (key === 'is_featured') {
-      params[key] = fields[key] ? 1 : 0;
-    } else {
-      params[key] = fields[key] ?? null;
+      values.push(stringifyJson(fields[key] ?? []));
+      return `${key} = $${paramIndex}::jsonb`;
     }
-  }
 
-  const result = getDb().prepare(`UPDATE projects SET ${assignments.join(', ')} WHERE id = @id`).run(params);
+    if (key === 'is_featured') {
+      values.push(Boolean(fields[key]));
+    } else {
+      values.push(fields[key] ?? null);
+    }
 
-  if (result.changes === 0) {
-    return null;
-  }
-
-  return getProjectById(id);
-}
-
-function updateProjectEmbedding(id, embedding) {
-  const result = getDb().prepare(`
-    UPDATE projects
-    SET embedding = @embedding, updated_at = @updated_at
-    WHERE id = @id
-  `).run({
-    id,
-    embedding: embedding ? stringifyJson(embedding) : null,
-    updated_at: Date.now(),
+    return `${key} = $${paramIndex}`;
   });
 
-  return result.changes > 0;
-}
+  const updatedAtIndex = keys.length + 3;
+  assignments.push(`updated_at = $${updatedAtIndex}`);
+  values.push(Date.now());
 
-function deleteProject(id) {
-  const result = getDb().prepare('DELETE FROM projects WHERE id = ?').run(id);
-  return result.changes > 0;
-}
+  return withUserContext(userId, async (client) => {
+    const result = await client.query(
+      `UPDATE projects SET ${assignments.join(', ')} WHERE id = $1 AND user_id = $2 RETURNING *`,
+      values,
+    );
 
-function reorderProjects(orderedIds) {
-  const db = getDb();
-  const reorder = db.transaction((ids) => {
-    ids.forEach((projectId, index) => {
-      db.prepare(`
-        UPDATE projects
-        SET sort_order = ?, updated_at = ?
-        WHERE id = ?
-      `).run(index, Date.now(), projectId);
-    });
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    return rowToProject(result.rows[0]);
   });
-
-  reorder(orderedIds);
-  return listProjects();
 }
 
-function getFireworksApiKey() {
-  const row = getProfileRow();
+async function updateProjectEmbedding(userId, id, embedding) {
+  return withUserContext(userId, async (client) => {
+    const result = await client.query(
+      `UPDATE projects
+       SET embedding = $3::vector, updated_at = $4
+       WHERE id = $1 AND user_id = $2`,
+      [id, userId, embedding ? formatVector(embedding) : null, Date.now()],
+    );
+
+    return result.rowCount > 0;
+  });
+}
+
+async function deleteProject(userId, id) {
+  return withUserContext(userId, async (client) => {
+    const result = await client.query(
+      'DELETE FROM projects WHERE id = $1 AND user_id = $2',
+      [id, userId],
+    );
+    return result.rowCount > 0;
+  });
+}
+
+async function reorderProjects(userId, orderedIds) {
+  return withUserContext(userId, async (client) => {
+    const now = Date.now();
+
+    for (let index = 0; index < orderedIds.length; index += 1) {
+      await client.query(
+        `UPDATE projects
+         SET sort_order = $3, updated_at = $4
+         WHERE id = $1 AND user_id = $2`,
+        [orderedIds[index], userId, index, now],
+      );
+    }
+
+    const result = await client.query(
+      `SELECT * FROM projects
+       WHERE user_id = $1
+       ORDER BY sort_order ASC, created_at ASC`,
+      [userId],
+    );
+
+    return result.rows.map(rowToProject);
+  });
+}
+
+async function getFireworksApiKey(userId) {
+  const row = await getProfileRow(userId);
 
   if (row?.fireworks_api_key_enc) {
     try {
@@ -344,8 +434,8 @@ function getFireworksApiKey() {
   return config.FIREWORKS_API_KEY || process.env.FIREWORKS_API_KEY || null;
 }
 
-function getAiModelSettings() {
-  const profile = getProfile();
+async function getAiModelSettings(userId) {
+  const profile = await getProfile(userId);
 
   return {
     qualityModel: profile.ai_quality_model || DEFAULT_AI_QUALITY_MODEL,
@@ -355,7 +445,7 @@ function getAiModelSettings() {
   };
 }
 
-function buildProjectEmbedText(project) {
+function buildProjectEmbedText(_userId, project) {
   if (!project) {
     return '';
   }
@@ -368,7 +458,7 @@ function buildProjectEmbedText(project) {
   ].filter(Boolean).join(' ').trim();
 }
 
-function shouldReembedProject(previous, nextFields) {
+function shouldReembedProject(_userId, previous, nextFields) {
   if (!previous) {
     return true;
   }

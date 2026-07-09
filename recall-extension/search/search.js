@@ -2,9 +2,8 @@ import {
   askLibrary,
   clearTestData,
   deleteItem,
+  downloadExport,
   getAskStatus,
-  getConnectionSettings,
-  getExportUrl,
   getItem,
   getItemTags,
   getJobHistory,
@@ -16,6 +15,7 @@ import {
   search,
   updateItemTags,
 } from '../shared/api.js';
+import { requireAuth } from '../shared/auth-gate.js';
 import { createLiveSearchRunner } from '../shared/live-search.js';
 import {
   bindSearchCards,
@@ -733,16 +733,7 @@ $('#ask-form').addEventListener('submit', async (event) => {
 // ── Export ──────────────────────────────────────────────────────────────────
 
 async function triggerExportDownload(format) {
-  const url = await getExportUrl(format);
-  const { apiKey } = await getConnectionSettings();
-  const headers = apiKey ? { 'X-Recall-API-Key': apiKey } : {};
-  const response = await fetch(url, { headers });
-
-  if (!response.ok) {
-    throw new Error(`Export failed (${response.status})`);
-  }
-
-  const blob = await response.blob();
+  const blob = await downloadExport(format);
   const objectUrl = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = objectUrl;
@@ -766,16 +757,24 @@ $('#export-md-btn').addEventListener('click', () => {
 
 // ── Initialise ───────────────────────────────────────────────────────────────
 
-const params = new URLSearchParams(window.location.search);
-const initialQuery = params.get('q');
+async function start() {
+  if (!(await requireAuth())) {
+    return;
+  }
 
-if (initialQuery) {
-  $('#search-input').value = initialQuery;
-  scheduleSearch();
-} else {
-  setPanelVisibility({ showRecommendations: true, showResults: false, showRelated: false });
-  loadRecommendations();
+  const params = new URLSearchParams(window.location.search);
+  const initialQuery = params.get('q');
+
+  if (initialQuery) {
+    $('#search-input').value = initialQuery;
+    scheduleSearch();
+  } else {
+    setPanelVisibility({ showRecommendations: true, showResults: false, showRelated: false });
+    loadRecommendations();
+  }
+
+  refreshFooter();
+  loadJobHistory();
 }
 
-refreshFooter();
-loadJobHistory();
+start();

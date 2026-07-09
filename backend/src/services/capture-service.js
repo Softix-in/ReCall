@@ -64,9 +64,9 @@ function normalizeCapturePayload(body) {
   };
 }
 
-function checkDuplicate(url, queue) {
+async function checkDuplicate(userId, url, queue) {
   const sinceMs = Date.now() - config.DEDUP_WINDOW_MS;
-  const recent = itemsDb.findRecentByUrl(url, sinceMs);
+  const recent = await itemsDb.findRecentByUrl(userId, url, sinceMs);
 
   if (recent) {
     const error = new Error('Duplicate URL captured within the last 60 seconds');
@@ -82,13 +82,13 @@ function checkDuplicate(url, queue) {
   }
 }
 
-function createCapture(body, queue) {
+async function createCapture(userId, body, queue) {
   const payload = normalizeCapturePayload(body);
-  checkDuplicate(payload.url, queue);
+  await checkDuplicate(userId, payload.url, queue);
 
-  const item = itemsDb.createItem(payload);
+  const item = await itemsDb.createItem(userId, payload);
 
-  queue.addJob({ itemId: item.id, url: item.url });
+  queue.addJob({ itemId: item.id, userId, url: item.url });
 
   return {
     id: item.id,

@@ -1,22 +1,22 @@
 const profileDb = require('../db/profile');
 const embedClient = require('../services/embed-client');
 
-async function embedProject(projectId) {
-  const project = profileDb.getProjectById(projectId);
+async function embedProject({ userId, projectId }) {
+  const project = await profileDb.getProjectById(userId, projectId);
 
   if (!project) {
     return;
   }
 
-  const text = profileDb.buildProjectEmbedText(project);
+  const text = profileDb.buildProjectEmbedText(userId, project);
 
   if (!text) {
-    profileDb.updateProjectEmbedding(projectId, null);
+    await profileDb.updateProjectEmbedding(userId, projectId, null);
     return;
   }
 
   const embedding = await embedClient.embedText(text);
-  profileDb.updateProjectEmbedding(projectId, embedding);
+  await profileDb.updateProjectEmbedding(userId, projectId, embedding);
 }
 
 module.exports = {

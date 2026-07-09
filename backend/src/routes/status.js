@@ -5,37 +5,49 @@ const { getStorageBytes } = require('../fs');
 function createStatusRouter(queue) {
   const router = express.Router();
 
-  router.get('/status', (req, res) => {
-    const lastSaved = itemsDb.getLastSavedItem();
+  router.get('/status', async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const [lastSaved, itemCount] = await Promise.all([
+        itemsDb.getLastSavedItem(userId),
+        itemsDb.countItems(userId),
+      ]);
 
-    res.json({
-      ok: true,
-      itemCount: itemsDb.countItems(),
-      queueLength: queue.getQueueLength(),
-      storageBytes: getStorageBytes(),
-      paused: queue.isPaused(),
-      lastSaved: lastSaved
-        ? { id: lastSaved.id, title: lastSaved.title, url: lastSaved.url }
-        : null,
-    });
+      res.json({
+        ok: true,
+        itemCount,
+        queueLength: queue.getQueueLength(),
+        storageBytes: getStorageBytes(),
+        paused: queue.isPaused(),
+        lastSaved: lastSaved
+          ? { id: lastSaved.id, title: lastSaved.title, url: lastSaved.url }
+          : null,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
-  router.get('/status/:id', (req, res) => {
-    const item = itemsDb.getItemById(req.params.id);
+  router.get('/status/:id', async (req, res) => {
+    try {
+      const item = await itemsDb.getItemById(req.user.id, req.params.id);
 
-    if (!item) {
-      res.status(404).json({ error: 'Item not found' });
-      return;
+      if (!item) {
+        res.status(404).json({ error: 'Item not found' });
+        return;
+      }
+
+      res.json({
+        id: item.id,
+        processing: item.processing,
+        processed_at: item.processed_at,
+        title: item.title,
+        url: item.url,
+        error_message: item.error_message ?? null,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
     }
-
-    res.json({
-      id: item.id,
-      processing: item.processing,
-      processed_at: item.processed_at,
-      title: item.title,
-      url: item.url,
-      error_message: item.error_message ?? null,
-    });
   });
 
   return router;

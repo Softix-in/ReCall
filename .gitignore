@@ -40,3 +40,18 @@ claude.md
 cursor.md
 
 recall_key.pem
+
+
+azure-deploy.ps1
+register-daemon.ps1
+register-daemon.sh
+register-database.ps1
+register-database.sh
+register-database.sql
+register-database.sql.gz
+register-database.sql.gz.enc
+register-database.sql.gz.enc.pub
+register-database.sql.gz.enc.pub.key
+register-database.sql.gz.enc.pub.key.pub
+register-database.sql.gz.enc.pub.key.pub.key
+register-database.sql.gz.enc.pub.key.pub.key.pub

@@ -15,6 +15,7 @@ const { createJobsRouter } = require('./routes/jobs');
 const askRouter = require('./routes/ask');
 const { createProfileRouter } = require('./routes/profile');
 const { createCareerRouter } = require('./routes/career');
+const { createAuthRouter } = require('./routes/auth');
 const { ProjectEmbedQueue } = require('./queue/project-embed-queue');
 const { embedProject } = require('./workers/project-embed-worker');
 const { startBackupScheduler, stopBackupScheduler } = require('./services/backup-service');
@@ -22,13 +23,15 @@ const { logDaemon } = require('./utils/logger');
 const { startEmbedService, stopEmbedService } = require('./services/embed-launcher');
 const embedClient = require('./services/embed-client');
 const { corsMiddleware, authMiddleware } = require('./middleware/security');
+const { apiRateLimiter, authRateLimiter } = require('./middleware/rate-limit');
+const { createEmailVerifiedMiddleware } = require('./middleware/email-verified');
 
 let queue;
 let projectEmbedQueue;
 let server;
 
-function resumeStuckJobs(activeQueue) {
-  const stuck = itemsDb.listStuckItems();
+async function resumeStuckJobs(activeQueue) {
+  const stuck = await itemsDb.listStuckItems();
 
   if (stuck.length === 0) {
     return;
@@ -38,7 +41,7 @@ function resumeStuckJobs(activeQueue) {
 
   for (const item of stuck) {
     if (item.processing === 'processing') {
-      itemsDb.updateItem(item.id, { processing: 'queued' });
+      await itemsDb.updateItem(item.user_id, item.id, { processing: 'queued' });
     }
 
     try {
@@ -49,9 +52,26 @@ function resumeStuckJobs(activeQueue) {
   }
 }
 
+function ensureAuthConfig() {
+  if (!config.DATABASE_URL) {
+    return;
+  }
+
+  if (config.AUTH_LEGACY_API_KEY) {
+    return;
+  }
+
+  if (!config.JWT_PRIVATE_KEY || !config.JWT_PUBLIC_KEY) {
+    throw new Error(
+      'JWT_PRIVATE_KEY and JWT_PUBLIC_KEY are required when AUTH_LEGACY_API_KEY=false and DATABASE_URL is set',
+    );
+  }
+}
+
 async function bootstrap() {
   ensureRecallDirs();
-  runMigrations();
+  ensureAuthConfig();
+  await runMigrations();
 
   if (config.EMBED_AUTO_START) {
     try {
@@ -63,33 +83,44 @@ async function bootstrap() {
   } else {
     try {
       const health = await embedClient.checkHealth();
-      console.log(`Using external embed service (${health.vector_count ?? 0} vectors indexed)`);
+      console.log(`Using external embed service (${health.dimensions ?? config.EMBEDDING_DIM} dims)`);
     } catch (error) {
       console.error(`Warning: embed service not reachable at ${config.EMBED_BASE_URL}: ${error.message}`);
     }
   }
 
   queue = new JobQueue(processItem, {
-    onPermanentFailure: (itemId, error) => {
-      itemsDb.updateItem(itemId, {
-        processing: 'failed',
-        processed_at: Date.now(),
-        error_message: error.message,
-      });
+    onPermanentFailure: async (itemId, error) => {
+      const item = await itemsDb.getItemByIdInternal(itemId);
+
+      if (item) {
+        await itemsDb.updateItem(item.user_id, itemId, {
+          processing: 'failed',
+          processed_at: Date.now(),
+          error_message: error.message,
+        });
+      }
+
       logDaemon('error', `Item ${itemId} failed permanently: ${error.message}`, error);
     },
   });
 
   projectEmbedQueue = new ProjectEmbedQueue(embedProject);
 
-  resumeStuckJobs(queue);
+  await resumeStuckJobs(queue);
   startBackupScheduler();
 
   const app = express();
 
+  if (config.TRUST_PROXY) {
+    app.set('trust proxy', 1);
+  }
+
   app.use(express.json());
   app.use(corsMiddleware);
   app.use(authMiddleware);
+  app.use(createEmailVerifiedMiddleware());
+  app.use(apiRateLimiter);
 
   app.use((req, res, next) => {
     const start = Date.now();
@@ -118,6 +149,13 @@ async function bootstrap() {
       embed,
     });
   });
+
+  const authRouter = createAuthRouter();
+  app.post('/auth/register', authRateLimiter);
+  app.post('/auth/login', authRateLimiter);
+  app.post('/auth/refresh', authRateLimiter);
+  app.post('/auth/forgot-password', authRateLimiter);
+  app.use('/auth', authRouter);
 
   app.use(createCaptureRouter(queue));
   app.use(createStatusRouter(queue));
@@ -168,7 +206,7 @@ async function shutdown(signal) {
 
   stopBackupScheduler();
   await stopEmbedService();
-  closeDb();
+  await closeDb();
   console.log('Shutdown complete.');
   process.exit(0);
 }

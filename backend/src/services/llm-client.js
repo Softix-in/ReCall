@@ -16,12 +16,23 @@ class LlmError extends Error {
   }
 }
 
-function resolveApiKey(userApiKey) {
-  return userApiKey || profileDb.getFireworksApiKey() || config.FIREWORKS_API_KEY || null;
+async function resolveApiKey(userId, userApiKey) {
+  if (userApiKey) {
+    return userApiKey;
+  }
+
+  if (userId) {
+    const fromProfile = await profileDb.getFireworksApiKey(userId);
+    if (fromProfile) {
+      return fromProfile;
+    }
+  }
+
+  return config.FIREWORKS_API_KEY || null;
 }
 
-function getClient(userApiKey) {
-  const apiKey = resolveApiKey(userApiKey);
+async function getClient({ userId, userApiKey } = {}) {
+  const apiKey = await resolveApiKey(userId, userApiKey);
 
   if (!apiKey) {
     throw new LlmError('Fireworks API key is not configured', {
@@ -48,7 +59,6 @@ function mapClientError(error) {
     });
   }
 
-  // Fireworks often masks invalid API keys as model inaccessible (404).
   if (status === 404 && (providerCode === 'NOT_FOUND' || message.includes('inaccessible'))) {
     return new LlmError('Invalid Fireworks API key', {
       code: 'invalid_api_key',
@@ -62,46 +72,75 @@ function mapClientError(error) {
   });
 }
 
-function getQualityModel(override) {
-  const settings = profileDb.getAiModelSettings();
-  return override || settings.qualityModel || DEFAULT_QUALITY_MODEL;
+async function getQualityModel(userId, override) {
+  if (override) {
+    return override;
+  }
+
+  if (userId) {
+    const settings = await profileDb.getAiModelSettings(userId);
+    return settings.qualityModel || DEFAULT_QUALITY_MODEL;
+  }
+
+  return DEFAULT_QUALITY_MODEL;
 }
 
-function getChatModel(override) {
-  const settings = profileDb.getAiModelSettings();
-  return override || settings.chatModel || DEFAULT_CHAT_MODEL;
+async function getChatModel(userId, override) {
+  if (override) {
+    return override;
+  }
+
+  if (userId) {
+    const settings = await profileDb.getAiModelSettings(userId);
+    return settings.chatModel || DEFAULT_CHAT_MODEL;
+  }
+
+  return DEFAULT_CHAT_MODEL;
 }
 
-function getReasoningModel(override) {
-  const settings = profileDb.getAiModelSettings();
-  return override || settings.reasoningModel || DEFAULT_REASONING_MODEL;
+async function getReasoningModel(userId, override) {
+  if (override) {
+    return override;
+  }
+
+  if (userId) {
+    const settings = await profileDb.getAiModelSettings(userId);
+    return settings.reasoningModel || DEFAULT_REASONING_MODEL;
+  }
+
+  return DEFAULT_REASONING_MODEL;
 }
 
-function resolveExtractionModel({ deepMode = false, model } = {}) {
+async function resolveExtractionModel({ userId, deepMode = false, model } = {}) {
   if (model) {
     return model;
   }
 
-  const settings = profileDb.getAiModelSettings();
-  if (deepMode || settings.deepAnalysisEnabled) {
-    return getReasoningModel();
+  if (userId) {
+    const settings = await profileDb.getAiModelSettings(userId);
+    if (deepMode || settings.deepAnalysisEnabled) {
+      return getReasoningModel(userId);
+    }
+  } else if (deepMode) {
+    return DEFAULT_REASONING_MODEL;
   }
 
-  return getQualityModel();
+  return getQualityModel(userId);
 }
 
 async function completeStructured({
   prompt,
   schema,
   schemaName,
+  userId,
   userApiKey,
   model,
   temperature = 0.2,
 }) {
   try {
-    const client = getClient(userApiKey);
+    const client = await getClient({ userId, userApiKey });
     const response = await client.chat.completions.create({
-      model: getQualityModel(model),
+      model: await getQualityModel(userId, model),
       messages: [{ role: 'user', content: prompt }],
       response_format: {
         type: 'json_schema',
@@ -128,11 +167,18 @@ async function completeStructured({
   }
 }
 
-async function streamCompletion({ messages, userApiKey, model, temperature = 0.4, onToken }) {
+async function streamCompletion({
+  messages,
+  userId,
+  userApiKey,
+  model,
+  temperature = 0.4,
+  onToken,
+}) {
   try {
-    const client = getClient(userApiKey);
+    const client = await getClient({ userId, userApiKey });
     const stream = await client.chat.completions.create({
-      model: getQualityModel(model),
+      model: await getQualityModel(userId, model),
       messages,
       stream: true,
       temperature,
@@ -162,13 +208,21 @@ async function streamCompletion({ messages, userApiKey, model, temperature = 0.4
   }
 }
 
-async function completeStreaming({ messages, res, userApiKey, model, temperature = 0.4 }) {
+async function completeStreaming({
+  messages,
+  res,
+  userId,
+  userApiKey,
+  model,
+  temperature = 0.4,
+}) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
   await streamCompletion({
     messages,
+    userId,
     userApiKey,
     model,
     temperature,
@@ -184,14 +238,15 @@ async function completeStreaming({ messages, res, userApiKey, model, temperature
 async function completeWithTools({
   messages,
   tools,
+  userId,
   userApiKey,
   model,
   temperature = 0.3,
 }) {
   try {
-    const client = getClient(userApiKey);
+    const client = await getClient({ userId, userApiKey });
     return await client.chat.completions.create({
-      model: getChatModel(model),
+      model: await getChatModel(userId, model),
       messages,
       tools,
       tool_choice: 'auto',
@@ -207,7 +262,7 @@ async function completeWithTools({
 }
 
 async function testApiKey(userApiKey) {
-  const client = getClient(userApiKey);
+  const client = await getClient({ userApiKey });
   const response = await client.chat.completions.create({
     model: DEFAULT_QUALITY_MODEL,
     messages: [{ role: 'user', content: 'Reply with exactly: OK' }],

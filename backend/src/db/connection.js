@@ -1,23 +1,11 @@
-const Database = require('better-sqlite3');
-const config = require('../config');
-
-let db;
+const { closePool } = require('./pg-pool');
 
 function getDb() {
-  if (!db) {
-    db = new Database(config.DB_PATH);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-  }
-
-  return db;
+  throw new Error('SQLite has been removed. Use pg-pool.js with DATABASE_URL instead.');
 }
 
 function closeDb() {
-  if (db) {
-    db.close();
-    db = null;
-  }
+  return closePool();
 }
 
 module.exports = {

@@ -4,9 +4,9 @@ const { EmbedClientError } = require('../services/embed-client');
 
 const router = express.Router();
 
-router.get('/search/recommendations', (req, res) => {
+router.get('/search/recommendations', async (req, res) => {
   try {
-    const recommendations = searchService.getRecommendations();
+    const recommendations = await searchService.getRecommendations(req.user.id);
     res.json(recommendations);
   } catch (error) {
     console.error('Recommendations failed:', error);
@@ -23,7 +23,7 @@ router.get('/search', async (req, res) => {
   }
 
   try {
-    const result = await searchService.search(query, {
+    const result = await searchService.search(req.user.id, query, {
       type: req.query.type,
       mode: req.query.mode,
       since: req.query.since,

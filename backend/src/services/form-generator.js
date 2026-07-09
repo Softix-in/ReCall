@@ -2,8 +2,8 @@ const profileDb = require('../db/profile');
 const careerDb = require('../db/career');
 const { LlmError, completeStructured, completeStreaming, streamCompletion } = require('./llm-client');
 
-function ensureApiKey() {
-  if (!profileDb.getFireworksApiKey()) {
+async function ensureApiKey(userId) {
+  if (!(await profileDb.getFireworksApiKey(userId))) {
     throw new LlmError('Fireworks API key is not configured', {
       code: 'missing_api_key',
       status: 400,
@@ -11,10 +11,12 @@ function ensureApiKey() {
   }
 }
 
-function loadContext(jdAnalysisId) {
-  const profile = profileDb.getProfile();
-  const projects = profileDb.listProjects();
-  const jdAnalysis = jdAnalysisId ? careerDb.getJdAnalysisById(jdAnalysisId) : null;
+async function loadContext(userId, jdAnalysisId) {
+  const profile = await profileDb.getProfile(userId);
+  const projects = await profileDb.listProjects(userId);
+  const jdAnalysis = jdAnalysisId
+    ? await careerDb.getJdAnalysisById(userId, jdAnalysisId)
+    : null;
 
   return { profile, projects, jdAnalysis };
 }
@@ -43,10 +45,10 @@ ${projectSummary || 'None'}
 ${jdBlock}`;
 }
 
-async function generateBio({ tone = 'professional', word_limit = 80, jd_analysis_id: jdAnalysisId } = {}) {
-  ensureApiKey();
+async function generateBio({ userId, tone = 'professional', word_limit = 80, jd_analysis_id: jdAnalysisId } = {}) {
+  await ensureApiKey(userId);
 
-  const context = loadContext(jdAnalysisId);
+  const context = await loadContext(userId, jdAnalysisId);
   const prompt = `Write a concise professional bio for this candidate.
 Tone: ${tone}
 Word limit: about ${word_limit} words
@@ -57,6 +59,7 @@ ${buildProfileContext(context)}
 Return JSON: { "bio": "..." }`;
 
   const result = await completeStructured({
+    userId,
     prompt,
     schema: {
       type: 'object',
@@ -71,10 +74,10 @@ Return JSON: { "bio": "..." }`;
   return { bio: result.bio?.trim() || '' };
 }
 
-async function generatePitch({ context: extraContext = '', word_limit = 120, jd_analysis_id: jdAnalysisId } = {}) {
-  ensureApiKey();
+async function generatePitch({ userId, context: extraContext = '', word_limit = 120, jd_analysis_id: jdAnalysisId } = {}) {
+  await ensureApiKey(userId);
 
-  const context = loadContext(jdAnalysisId);
+  const context = await loadContext(userId, jdAnalysisId);
   const prompt = `Write a short networking pitch / elevator pitch for this candidate.
 Word limit: about ${word_limit} words
 Additional context: ${extraContext || 'None'}
@@ -84,6 +87,7 @@ ${buildProfileContext(context)}
 Return JSON: { "pitch": "..." }`;
 
   const result = await completeStructured({
+    userId,
     prompt,
     schema: {
       type: 'object',
@@ -99,17 +103,18 @@ Return JSON: { "pitch": "..." }`;
 }
 
 async function generateCoverLetter({
+  userId,
   jd_analysis_id: jdAnalysisId,
   tone = 'professional',
   res,
 }) {
-  ensureApiKey();
+  await ensureApiKey(userId);
 
   if (!jdAnalysisId) {
     throw new LlmError('jd_analysis_id is required', { code: 'validation_error', status: 400 });
   }
 
-  const context = loadContext(jdAnalysisId);
+  const context = await loadContext(userId, jdAnalysisId);
 
   if (!context.jdAnalysis) {
     throw new LlmError('JD analysis not found', { code: 'not_found', status: 404 });
@@ -127,6 +132,7 @@ Job description excerpt:
 ${context.jdAnalysis.jd_text.slice(0, 3500)}`;
 
   await completeStreaming({
+    userId,
     messages: [{ role: 'user', content: prompt }],
     res,
     temperature: 0.55,
@@ -134,16 +140,17 @@ ${context.jdAnalysis.jd_text.slice(0, 3500)}`;
 }
 
 async function generateCoverLetterText({
+  userId,
   jd_analysis_id: jdAnalysisId,
   tone = 'professional',
 } = {}) {
-  ensureApiKey();
+  await ensureApiKey(userId);
 
   if (!jdAnalysisId) {
     throw new LlmError('jd_analysis_id is required', { code: 'validation_error', status: 400 });
   }
 
-  const context = loadContext(jdAnalysisId);
+  const context = await loadContext(userId, jdAnalysisId);
 
   if (!context.jdAnalysis) {
     throw new LlmError('JD analysis not found', { code: 'not_found', status: 404 });
@@ -161,6 +168,7 @@ Job description excerpt:
 ${context.jdAnalysis.jd_text.slice(0, 3500)}`;
 
   const cover_letter = await streamCompletion({
+    userId,
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.55,
   });

@@ -16,14 +16,29 @@ const SETTINGS_PATH = path.join(RECALL_HOME, 'settings.json');
 const EMBED_HOST = process.env.EMBED_HOST || '127.0.0.1';
 const EMBED_PORT = Number(process.env.EMBED_PORT) || 7879;
 
+function readPemEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    return '';
+  }
+
+  return value.includes('\\n') ? value.replace(/\\n/g, '\n') : value;
+}
+
 module.exports = {
   PORT: Number(process.env.PORT) || 7878,
   HOST: process.env.HOST || '127.0.0.1',
+  DATABASE_URL: process.env.DATABASE_URL || '',
   API_KEY: process.env.RECALL_API_KEY || '',
+  AUTH_LEGACY_API_KEY: process.env.AUTH_LEGACY_API_KEY === 'true',
+  BOOTSTRAP_USER_EMAIL: process.env.BOOTSTRAP_USER_EMAIL || 'bootstrap@recall.local',
+  JWT_PRIVATE_KEY: readPemEnv('JWT_PRIVATE_KEY'),
+  JWT_PUBLIC_KEY: readPemEnv('JWT_PUBLIC_KEY'),
   FIREWORKS_API_KEY: process.env.FIREWORKS_API_KEY || '',
-  CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
+  CORS_ORIGIN: process.env.CORS_ORIGIN || process.env.RECALL_CORS_ORIGINS || '*',
+  TRUST_PROXY: process.env.TRUST_PROXY === 'true',
   EMBED_AUTO_START: process.env.EMBED_AUTO_START !== 'false',
-  VERSION: '0.6.0',
+  VERSION: '0.7.1',
   RECALL_HOME,
   DATA_DIR,
   DB_PATH,
@@ -47,4 +62,19 @@ module.exports = {
   EMBEDDING_DIM: 384,
   AUDIO_DOWNLOAD_TIMEOUT_MS: 300_000,
   TRANSCRIPTION_TIMEOUT_MS: 300_000,
+  R2_ENDPOINT: process.env.R2_ENDPOINT || '',
+  R2_BUCKET: process.env.R2_BUCKET || '',
+  R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID || '',
+  R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY || '',
+  R2_PUBLIC_BASE_URL: process.env.R2_PUBLIC_BASE_URL || '',
+  RATE_LIMIT_WINDOW_MS: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000,
+  RATE_LIMIT_MAX: Number(process.env.RATE_LIMIT_MAX) || 100,
+  PUBLIC_BASE_URL: process.env.PUBLIC_BASE_URL || `http://${process.env.HOST || '127.0.0.1'}:${Number(process.env.PORT) || 7878}`,
+  SMTP_HOST: process.env.SMTP_HOST || '',
+  SMTP_PORT: Number(process.env.SMTP_PORT) || 587,
+  SMTP_SECURE: process.env.SMTP_SECURE === 'true',
+  SMTP_USER: process.env.SMTP_USER || '',
+  SMTP_PASS: process.env.SMTP_PASS || '',
+  SMTP_FROM: process.env.SMTP_FROM || '',
+  EMAIL_DEV_LOG: process.env.EMAIL_DEV_LOG === 'true',
 };

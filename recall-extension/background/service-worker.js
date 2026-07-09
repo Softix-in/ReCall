@@ -4,8 +4,11 @@ import {
   getItemStatus,
   getStatus,
   health,
+  isAuthError,
   retryItem,
 } from '../shared/api.js';
+import { isAuthenticated } from '../shared/auth.js';
+import { getLoginUrl } from '../shared/auth-gate.js';
 
 const POLL_INTERVAL_MS = 5000;
 const STORAGE_KEY = 'recallJobQueue';
@@ -126,24 +129,45 @@ function buildCapturePayload(scraped, { save_mode = 'auto_scrape', note = null }
   };
 }
 
-async function enqueueCapture(payload) {
-  const result = await capture(payload);
-  const queue = await readQueue();
+function notifyAuthRequired() {
+  chrome.runtime.sendMessage({ type: 'AUTH_REQUIRED' }).catch(() => {});
+}
 
-  queue.unshift({
-    id: result.id,
-    url: payload.url,
-    title: payload.title || payload.og_title || payload.url,
-    processing: result.processing || 'queued',
-    createdAt: Date.now(),
-    error: null,
+function openLoginPopup() {
+  return chrome.windows.create({
+    url: getLoginUrl(),
+    type: 'popup',
+    width: 420,
+    height: 560,
   });
+}
 
-  await writeQueue(queue.slice(0, 50));
-  await updateBadge();
-  ensurePolling();
+async function enqueueCapture(payload) {
+  try {
+    const result = await capture(payload);
+    const queue = await readQueue();
 
-  return result;
+    queue.unshift({
+      id: result.id,
+      url: payload.url,
+      title: payload.title || payload.og_title || payload.url,
+      processing: result.processing || 'queued',
+      createdAt: Date.now(),
+      error: null,
+    });
+
+    await writeQueue(queue.slice(0, 50));
+    await updateBadge();
+    ensurePolling();
+
+    return result;
+  } catch (error) {
+    if (isAuthError(error)) {
+      notifyAuthRequired();
+    }
+
+    throw error;
+  }
 }
 
 async function quickSaveCurrentTab() {
@@ -225,7 +249,11 @@ async function pollQueue() {
       }
 
       nextQueue.push(job);
-    } catch {
+    } catch (error) {
+      if (isAuthError(error)) {
+        notifyAuthRequired();
+      }
+
       nextQueue.push(job);
     }
   }
@@ -320,9 +348,22 @@ ensureDefaultConnection()
 
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === 'quick-save') {
+    if (!(await isAuthenticated())) {
+      try {
+        await openLoginPopup();
+      } catch (error) {
+        console.error('Could not open sign-in:', error);
+      }
+      return;
+    }
+
     try {
       await quickSaveCurrentTab();
     } catch (error) {
+      if (isAuthError(error)) {
+        notifyAuthRequired();
+      }
+
       console.error('Quick save failed:', error);
     }
     return;
@@ -419,11 +460,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           sendResponse({ ok: false, error: 'Unknown message type' });
       }
     } catch (error) {
+      const authRequired = isAuthError(error);
+
+      if (authRequired) {
+        notifyAuthRequired();
+      }
+
       sendResponse({
         ok: false,
         error: error.message,
         status: error.status,
         data: error.data,
+        authRequired,
       });
     }
   })();

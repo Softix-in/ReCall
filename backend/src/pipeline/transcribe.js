@@ -24,8 +24,8 @@ function whisperBinaryPath() {
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;
 }
 
-function whisperModelPath() {
-  const settings = getSettings();
+async function whisperModelPath(userId) {
+  const settings = userId ? await getSettings(userId) : { whisperModel: 'small' };
   const preferred = path.join(config.WHISPER_DIR, `ggml-${settings.whisperModel}.bin`);
 
   const candidates = [
@@ -39,8 +39,8 @@ function whisperModelPath() {
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;
 }
 
-function isWhisperAvailable() {
-  return Boolean(whisperBinaryPath() && whisperModelPath());
+async function isWhisperAvailable(userId) {
+  return Boolean(whisperBinaryPath() && await whisperModelPath(userId));
 }
 
 function transcriptRelativePath(itemId) {
@@ -51,9 +51,9 @@ function transcriptAbsolutePath(itemId) {
   return path.join(config.TRANSCRIPTS_DIR, `${itemId}.txt`);
 }
 
-async function transcribeAudio(audioPath, itemId) {
+async function transcribeAudio(audioPath, itemId, userId) {
   const binary = whisperBinaryPath();
-  const model = whisperModelPath();
+  const model = await whisperModelPath(userId);
 
   if (!binary || !model) {
     throw new Error(

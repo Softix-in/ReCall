@@ -1,4 +1,5 @@
 import { fetchProfile, health } from '../shared/api.js';
+import { requireAuth } from '../shared/auth-gate.js';
 import { mountIdentityTab } from './sections/identity.js';
 import { mountProjectsTab } from './sections/projects.js';
 import { mountResumeTab } from './sections/resume.js';
@@ -39,7 +40,7 @@ function setConnectionBanner(online, message) {
   }
 
   banner.hidden = false;
-  text.textContent = message || 'Backend unreachable. Check that Recall is running and your API key is set in Settings.';
+  text.textContent = message || 'Backend unreachable. Sign in to sync your library.';
 }
 
 function createContext() {
@@ -135,6 +136,10 @@ function mountTabs() {
 }
 
 async function init() {
+  if (!(await requireAuth())) {
+    return;
+  }
+
   bindNavigation();
   mountTabs();
 

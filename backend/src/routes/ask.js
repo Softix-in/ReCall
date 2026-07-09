@@ -4,11 +4,11 @@ const itemsDb = require('../db/items');
 const embedClient = require('../services/embed-client');
 const { logDaemon } = require('../utils/logger');
 
-const router = express.Router();
-
 const OLLAMA_HOST = process.env.OLLAMA_HOST || '127.0.0.1';
 const OLLAMA_PORT = Number(process.env.OLLAMA_PORT) || 11434;
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3';
+
+const router = express.Router();
 
 function ollamaAvailable() {
   return new Promise((resolve) => {
@@ -123,11 +123,11 @@ router.post('/ask', async (req, res) => {
   }
 
   try {
-    // Semantic search to find relevant items
+    const userId = req.user.id;
     const embedding = await embedClient.embedText(question.trim());
-    const vectorResults = await embedClient.queryVectors(embedding, Math.min(limit, 20));
-    const ids = vectorResults.map((r) => r.id);
-    const items = itemsDb.getItemsByIds(ids);
+    const matches = await itemsDb.searchSemantic(userId, embedding, Math.min(limit, 20));
+    const ids = matches.map((match) => match.id);
+    const items = await itemsDb.getItemsByIds(userId, ids);
 
     if (items.length === 0) {
       res.json({

@@ -56,6 +56,46 @@
           <input type="number" id="backupRetentionDays" min="1" max="30" />
         </label>
 
+        <fieldset id="account-security" hidden>
+          <legend>Account security</legend>
+          <p class="hint" id="verification-status"></p>
+          <div class="actions">
+            <button type="button" id="resend-verification-btn" class="btn-secondary" hidden>Resend verification email</button>
+          </div>
+
+          <label>
+            Current password
+            <input type="password" id="current-password" autocomplete="current-password" />
+          </label>
+          <label>
+            New password
+            <input type="password" id="new-password" autocomplete="new-password" minlength="8" />
+          </label>
+          <div class="actions">
+            <button type="button" id="change-password-btn" class="btn-secondary">Change password</button>
+            <span id="password-status" class="status"></span>
+          </div>
+
+          <label>
+            New email
+            <input type="email" id="new-email" autocomplete="email" />
+          </label>
+          <p class="hint" id="pending-email-hint" hidden></p>
+          <div class="actions">
+            <button type="button" id="change-email-btn" class="btn-secondary">Change email</button>
+            <span id="email-status" class="status"></span>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Account</legend>
+          <p class="hint" id="account-email">Not signed in</p>
+          <div class="actions">
+            <button type="button" id="sign-out-btn" class="btn-secondary" hidden>Sign out</button>
+            <button type="button" id="open-login-btn" class="btn-secondary">Sign in</button>
+          </div>
+        </fieldset>
+
         <fieldset>
           <legend>Backend connection</legend>
           <p class="hint">Pre-configured from <code>shared/defaults.js</code> on install. Override here only if needed.</p>
@@ -63,11 +103,6 @@
           <label>
             Backend URL
             <input type="url" id="backendUrl" placeholder="http://127.0.0.1:7878" />
-          </label>
-
-          <label>
-            API key (required for hosted backend)
-            <input type="password" id="recallApiKey" placeholder="Leave empty for local-only" autocomplete="off" />
           </label>
         </fieldset>
 

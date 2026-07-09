@@ -9,11 +9,12 @@ function createProfileRouter(projectEmbedQueue) {
   const router = express.Router();
   const enqueueProjectEmbedding = createProjectEmbedEnqueuer(projectEmbedQueue);
 
-  router.get('/profile', (req, res) => {
+  router.get('/profile', async (req, res) => {
     try {
-      const user_profile = profileDb.getProfile();
-      const projects = profileDb.listProjects();
-      const master_resume = careerDb.getMasterResume();
+      const userId = req.user.id;
+      const user_profile = await profileDb.getProfile(userId);
+      const projects = await profileDb.listProjects(userId);
+      const master_resume = await careerDb.getMasterResume(userId);
 
       res.json({ user_profile, projects, master_resume });
     } catch (error) {
@@ -22,7 +23,7 @@ function createProfileRouter(projectEmbedQueue) {
     }
   });
 
-  router.put('/profile', (req, res) => {
+  router.put('/profile', async (req, res) => {
     try {
       const body = req.body || {};
 
@@ -31,7 +32,7 @@ function createProfileRouter(projectEmbedQueue) {
         return;
       }
 
-      const user_profile = profileDb.updateProfile(body);
+      const user_profile = await profileDb.updateProfile(req.user.id, body);
       res.json({ user_profile });
     } catch (error) {
       console.error('PUT /profile failed:', error);
@@ -39,7 +40,7 @@ function createProfileRouter(projectEmbedQueue) {
     }
   });
 
-  router.put('/profile/ai-settings', (req, res) => {
+  router.put('/profile/ai-settings', async (req, res) => {
     try {
       const body = req.body || {};
       const updates = {};
@@ -68,7 +69,7 @@ function createProfileRouter(projectEmbedQueue) {
         updates.ai_deep_analysis_enabled = Boolean(body.ai_deep_analysis_enabled);
       }
 
-      const user_profile = profileDb.updateAiSettings(updates);
+      const user_profile = await profileDb.updateAiSettings(req.user.id, updates);
       res.json({ user_profile });
     } catch (error) {
       console.error('PUT /profile/ai-settings failed:', error);
@@ -87,7 +88,7 @@ function createProfileRouter(projectEmbedQueue) {
           : '';
         apiKey = trimmed || null;
       } else {
-        apiKey = profileDb.getFireworksApiKey();
+        apiKey = await profileDb.getFireworksApiKey(req.user.id);
       }
 
       if (!apiKey) {
@@ -112,17 +113,18 @@ function createProfileRouter(projectEmbedQueue) {
     }
   });
 
-  router.get('/profile/projects', (req, res) => {
+  router.get('/profile/projects', async (req, res) => {
     try {
-      res.json({ projects: profileDb.listProjects() });
+      res.json({ projects: await profileDb.listProjects(req.user.id) });
     } catch (error) {
       console.error('GET /profile/projects failed:', error);
       res.status(500).json({ error: 'Failed to list projects', detail: error.message });
     }
   });
 
-  router.post('/profile/projects', (req, res) => {
+  router.post('/profile/projects', async (req, res) => {
     try {
+      const userId = req.user.id;
       const body = req.body || {};
 
       if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
@@ -140,7 +142,7 @@ function createProfileRouter(projectEmbedQueue) {
         return;
       }
 
-      const project = profileDb.createProject({
+      const project = await profileDb.createProject(userId, {
         name: body.name.trim(),
         tagline: body.tagline,
         description: body.description,
@@ -153,7 +155,7 @@ function createProfileRouter(projectEmbedQueue) {
         is_featured: body.is_featured,
       });
 
-      enqueueProjectEmbedding(project.id);
+      enqueueProjectEmbedding(userId, project.id);
       res.status(201).json({ project });
     } catch (error) {
       console.error('POST /profile/projects failed:', error);
@@ -161,8 +163,9 @@ function createProfileRouter(projectEmbedQueue) {
     }
   });
 
-  router.put('/profile/projects/reorder', (req, res) => {
+  router.put('/profile/projects/reorder', async (req, res) => {
     try {
+      const userId = req.user.id;
       const orderedIds = req.body?.ordered_ids;
 
       if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
@@ -170,7 +173,7 @@ function createProfileRouter(projectEmbedQueue) {
         return;
       }
 
-      const existingProjects = profileDb.listProjects();
+      const existingProjects = await profileDb.listProjects(userId);
       const existingIds = new Set(existingProjects.map((project) => project.id));
       const invalidId = orderedIds.find((id) => !existingIds.has(id));
 
@@ -190,7 +193,7 @@ function createProfileRouter(projectEmbedQueue) {
         return;
       }
 
-      const projects = profileDb.reorderProjects(orderedIds);
+      const projects = await profileDb.reorderProjects(userId, orderedIds);
       res.json({ projects });
     } catch (error) {
       console.error('PUT /profile/projects/reorder failed:', error);
@@ -198,10 +201,11 @@ function createProfileRouter(projectEmbedQueue) {
     }
   });
 
-  router.put('/profile/projects/:id', (req, res) => {
+  router.put('/profile/projects/:id', async (req, res) => {
     try {
+      const userId = req.user.id;
       const { id } = req.params;
-      const existing = profileDb.getProjectById(id);
+      const existing = await profileDb.getProjectById(userId, id);
 
       if (!existing) {
         res.status(404).json({ error: 'Project not found' });
@@ -230,8 +234,8 @@ function createProfileRouter(projectEmbedQueue) {
         updates.name = updates.name.trim();
       }
 
-      const shouldReembed = profileDb.shouldReembedProject(existing, updates);
-      const project = profileDb.updateProject(id, updates);
+      const shouldReembed = profileDb.shouldReembedProject(userId, existing, updates);
+      const project = await profileDb.updateProject(userId, id, updates);
 
       if (!project) {
         res.status(404).json({ error: 'Project not found' });
@@ -239,7 +243,7 @@ function createProfileRouter(projectEmbedQueue) {
       }
 
       if (shouldReembed) {
-        enqueueProjectEmbedding(project.id);
+        enqueueProjectEmbedding(userId, project.id);
       }
 
       res.json({ project });
@@ -249,9 +253,9 @@ function createProfileRouter(projectEmbedQueue) {
     }
   });
 
-  router.delete('/profile/projects/:id', (req, res) => {
+  router.delete('/profile/projects/:id', async (req, res) => {
     try {
-      const deleted = profileDb.deleteProject(req.params.id);
+      const deleted = await profileDb.deleteProject(req.user.id, req.params.id);
 
       if (!deleted) {
         res.status(404).json({ error: 'Project not found' });
@@ -265,9 +269,9 @@ function createProfileRouter(projectEmbedQueue) {
     }
   });
 
-  router.get('/profile/resume', (req, res) => {
+  router.get('/profile/resume', async (req, res) => {
     try {
-      const resume = careerDb.getMasterResume();
+      const resume = await careerDb.getMasterResume(req.user.id);
       res.json({ resume });
     } catch (error) {
       console.error('GET /profile/resume failed:', error);
@@ -275,7 +279,7 @@ function createProfileRouter(projectEmbedQueue) {
     }
   });
 
-  router.post('/profile/resume', (req, res) => {
+  router.post('/profile/resume', async (req, res) => {
     try {
       const body = req.body || {};
 
@@ -294,7 +298,7 @@ function createProfileRouter(projectEmbedQueue) {
         return;
       }
 
-      const resume = careerDb.upsertMasterResume({
+      const resume = await careerDb.upsertMasterResume(req.user.id, {
         experience: body.experience,
         education: body.education,
         certifications: body.certifications,
@@ -308,9 +312,9 @@ function createProfileRouter(projectEmbedQueue) {
     }
   });
 
-  router.get('/profile/resume/history', (req, res) => {
+  router.get('/profile/resume/history', async (req, res) => {
     try {
-      const resumes = careerDb.listResumeHistory();
+      const resumes = await careerDb.listResumeHistory(req.user.id);
       res.json({ resumes });
     } catch (error) {
       console.error('GET /profile/resume/history failed:', error);
@@ -318,9 +322,9 @@ function createProfileRouter(projectEmbedQueue) {
     }
   });
 
-  router.get('/profile/resume/:id', (req, res) => {
+  router.get('/profile/resume/:id', async (req, res) => {
     try {
-      const resume = careerDb.getResumeById(req.params.id);
+      const resume = await careerDb.getResumeById(req.user.id, req.params.id);
 
       if (!resume) {
         res.status(404).json({ error: 'Resume not found' });

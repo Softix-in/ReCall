@@ -144,7 +144,7 @@ function rankCandidates(candidates, itemMap, filters, { hybrid }) {
 
   const normalized = normalizeScores(
     normalizeScores(scored, 'semantic_score'),
-    'keyword_score'
+    'keyword_score',
   );
 
   return normalized
@@ -155,7 +155,7 @@ function rankCandidates(candidates, itemMap, filters, { hybrid }) {
     .sort((a, b) => b.score - a.score);
 }
 
-async function findRelatedItems(primaryResults, filters, { hybrid }) {
+async function findRelatedItems(userId, primaryResults, filters, { hybrid }) {
   if (primaryResults.length === 0) {
     return [];
   }
@@ -168,7 +168,7 @@ async function findRelatedItems(primaryResults, filters, { hybrid }) {
   }
 
   const embedding = await embedClient.embedText(seedText.trim());
-  const matches = await embedClient.queryVectors(embedding, 20);
+  const matches = await itemsDb.searchSemantic(userId, embedding, 20);
   const excludeIds = new Set(primaryResults.map((item) => item.id));
 
   const candidates = matches
@@ -179,14 +179,14 @@ async function findRelatedItems(primaryResults, filters, { hybrid }) {
       keyword_score: 0,
     }));
 
-  const items = itemsDb.getItemsByIds(candidates.map((candidate) => candidate.id));
+  const items = await itemsDb.getItemsByIds(userId, candidates.map((candidate) => candidate.id));
   const itemMap = new Map(items.map((item) => [item.id, item]));
 
   return rankCandidates(candidates, itemMap, filters, { hybrid }).slice(0, 5);
 }
 
-function getRecommendations() {
-  const recent = itemsDb.listDoneItems({ limit: 8 });
+async function getRecommendations(userId) {
+  const recent = await itemsDb.listDoneItems(userId, { limit: 8 });
 
   return {
     recent,
@@ -194,7 +194,7 @@ function getRecommendations() {
   };
 }
 
-async function search(query, filters = {}) {
+async function search(userId, query, filters = {}) {
   const trimmed = query.trim();
 
   if (!trimmed) {
@@ -207,17 +207,17 @@ async function search(query, filters = {}) {
   const queryEmbedding = await embedClient.embedText(trimmed);
 
   const [semanticMatches, keywordMatches] = await Promise.all([
-    embedClient.queryVectors(queryEmbedding, 20),
-    hybrid ? itemsDb.searchFts(trimmed, 20) : Promise.resolve([]),
+    itemsDb.searchSemantic(userId, queryEmbedding, 20),
+    hybrid ? itemsDb.searchFts(userId, trimmed, 20) : Promise.resolve([]),
   ]);
 
   const candidates = mergeCandidates(semanticMatches, keywordMatches, hybrid);
   const ids = candidates.map((candidate) => candidate.id);
-  const items = itemsDb.getItemsByIds(ids);
+  const items = await itemsDb.getItemsByIds(userId, ids);
   const itemMap = new Map(items.map((item) => [item.id, item]));
 
   const ranked = rankCandidates(candidates, itemMap, filters, { hybrid }).slice(0, 10);
-  const related = await findRelatedItems(ranked, filters, { hybrid });
+  const related = await findRelatedItems(userId, ranked, filters, { hybrid });
 
   return {
     query: trimmed,

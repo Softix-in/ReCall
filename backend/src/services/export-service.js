@@ -72,8 +72,8 @@ function toJson(items) {
   return JSON.stringify({ exported_at: new Date().toISOString(), count: rows.length, items: rows }, null, 2);
 }
 
-async function exportItems({ format = 'json', type = null } = {}) {
-  let items = itemsDb.listDoneItems({ limit: 10_000 });
+async function exportItems(userId, { format = 'json', type = null } = {}) {
+  let items = await itemsDb.listDoneItems(userId, { limit: 10_000 });
 
   if (type) {
     items = items.filter((item) => item.source_type === type);

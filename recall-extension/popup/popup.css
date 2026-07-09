@@ -632,6 +632,15 @@ textarea {
   gap: 10px;
 }
 
+.user-email {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: 10px;
+}
+
 .gear-link {
   color: var(--muted);
   text-decoration: none;

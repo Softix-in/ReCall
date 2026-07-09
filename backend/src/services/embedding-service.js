@@ -1,4 +1,13 @@
 const embedClient = require('./embed-client');
+const itemsDb = require('../db/items');
+
+async function embedAndStoreItem(userId, item) {
+  const text = getEmbeddingText(item);
+  const embedding = await embedClient.embedText(text);
+  await itemsDb.updateItemEmbedding(userId, item.id, embedding);
+
+  return { embedding, text };
+}
 
 function getEmbeddingText(item) {
   if (item.save_mode === 'manual_note' && item.note?.trim()) {
@@ -13,31 +22,7 @@ function getEmbeddingText(item) {
   );
 }
 
-function buildVectorMetadata(item) {
-  return {
-    source_type: String(item.source_type ?? ''),
-    domain: String(item.domain ?? ''),
-    created_at: Number(item.created_at ?? 0),
-    save_mode: String(item.save_mode ?? ''),
-  };
-}
-
-async function embedAndStoreItem(item) {
-  const text = getEmbeddingText(item);
-  const embedding = await embedClient.embedText(text);
-
-  await embedClient.upsertVector(
-    item.id,
-    embedding,
-    buildVectorMetadata(item),
-    text
-  );
-
-  return { embedding, text };
-}
-
 module.exports = {
   getEmbeddingText,
-  buildVectorMetadata,
   embedAndStoreItem,
 };

@@ -1,11 +1,15 @@
 const itemsDb = require('../db/items');
-const chromaDb = require('../db/chroma');
+const embeddingService = require('../services/embedding-service');
 const { classifyUrl } = require('../pipeline/classify');
 const { fetchBySourceType } = require('../pipeline/fetch-content');
 const { fetchOgMetadata } = require('../pipeline/fetch-og');
 const { summariseText, summariseManualNote } = require('../pipeline/summarise');
 const { logJob, logDaemon } = require('../utils/logger');
 const { getSettings } = require('../services/settings-service');
+const { uploadTranscript, uploadThumbnail } = require('../services/object-storage');
+const fs = require('fs');
+const path = require('path');
+const config = require('../config');
 
 function parseCaptureMeta(item) {
   if (!item.capture_meta) {
@@ -13,7 +17,9 @@ function parseCaptureMeta(item) {
   }
 
   try {
-    return JSON.parse(item.capture_meta);
+    return typeof item.capture_meta === 'string'
+      ? JSON.parse(item.capture_meta)
+      : item.capture_meta;
   } catch {
     return {};
   }
@@ -49,9 +55,9 @@ async function processAutoScrape(item) {
 
   logJob(`[${item.id}] classified as ${sourceType}`);
 
-  itemsDb.updateItem(item.id, { source_type: sourceType });
+  await itemsDb.updateItem(item.user_id, item.id, { source_type: sourceType });
 
-  const fetched = await fetchBySourceType(sourceType, item.url, item.id);
+  const fetched = await fetchBySourceType(sourceType, item.url, item.id, item.user_id);
   const { title, summary } = await summariseText(fetched.text);
 
   return {
@@ -67,18 +73,54 @@ async function processAutoScrape(item) {
   };
 }
 
+async function persistLargeFiles(userId, itemId, result) {
+  const next = { ...result };
+
+  if (next.content?.trim()) {
+    const uploaded = await uploadTranscript(userId, itemId, next.content);
+    if (uploaded.url) {
+      next.transcript_url = uploaded.url;
+    }
+    if (uploaded.relativePath) {
+      next.transcript = uploaded.relativePath;
+    }
+  }
+
+  if (next.thumbnail && !next.thumbnail.startsWith('http')) {
+    const absolutePath = path.isAbsolute(next.thumbnail)
+      ? next.thumbnail
+      : path.join(config.RECALL_HOME, next.thumbnail);
+
+    if (fs.existsSync(absolutePath)) {
+      const buffer = fs.readFileSync(absolutePath);
+      const ext = path.extname(absolutePath) || '.jpg';
+      const uploaded = await uploadThumbnail(userId, itemId, buffer, ext);
+      if (uploaded.url) {
+        next.thumbnail_url = uploaded.url;
+      }
+      if (uploaded.relativePath) {
+        next.thumbnail = uploaded.relativePath;
+      }
+    }
+  }
+
+  return next;
+}
+
 async function processItem(itemId) {
-  const item = itemsDb.getItemById(itemId);
+  const item = await itemsDb.getItemByIdInternal(itemId);
 
   if (!item) {
     throw new Error(`Item not found: ${itemId}`);
   }
 
+  const userId = item.user_id;
+
   if (item.url.includes('fail-job-test')) {
     throw new Error('Simulated pipeline failure');
   }
 
-  itemsDb.updateItem(itemId, {
+  await itemsDb.updateItem(userId, itemId, {
     processing: 'processing',
     error_message: null,
   });
@@ -86,34 +128,39 @@ async function processItem(itemId) {
   logJob(`[${itemId}] processing started (${item.save_mode})`);
 
   try {
-    let result = item.save_mode === 'manual_note'
+    const result = item.save_mode === 'manual_note'
       ? await processManualNote(item)
       : await processAutoScrape(item);
 
-    const settings = getSettings();
+    const settings = await getSettings(userId);
 
-    if (result.content && result.content.length > settings.maxTranscriptLength) {
-      result = {
-        ...result,
-        content: `${result.content.slice(0, settings.maxTranscriptLength)}…`,
+    let processedResult = result;
+
+    if (processedResult.content && processedResult.content.length > settings.maxTranscriptLength) {
+      processedResult = {
+        ...processedResult,
+        content: `${processedResult.content.slice(0, settings.maxTranscriptLength)}…`,
       };
     }
 
-    const mergedItem = { ...item, ...result };
-    await chromaDb.upsertItemVector(mergedItem);
+    processedResult = await persistLargeFiles(userId, itemId, processedResult);
 
-    const updated = itemsDb.updateItem(itemId, {
-      ...result,
+    const mergedItem = { ...item, ...processedResult };
+    await embeddingService.embedAndStoreItem(userId, mergedItem);
+
+    const updated = await itemsDb.updateItem(userId, itemId, {
+      ...processedResult,
       processing: 'done',
       processed_at: Date.now(),
-      error_message: result.error_message ?? null,
+      error_message: processedResult.error_message ?? null,
     });
 
-    if (result.error_message) {
-      logJob(`[${itemId}] processing done with warning — ${result.error_message}`);
+    if (processedResult.error_message) {
+      logJob(`[${itemId}] processing done with warning — ${processedResult.error_message}`);
     } else {
       logJob(`[${itemId}] processing done — "${updated.title}"`);
     }
+
     return updated;
   } catch (error) {
     logJob(`[${itemId}] processing failed — ${error.message}`);

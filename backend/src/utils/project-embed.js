@@ -1,7 +1,7 @@
 function createProjectEmbedEnqueuer(projectEmbedQueue) {
-  return function enqueueProjectEmbedding(projectId) {
-    if (projectEmbedQueue && projectId) {
-      projectEmbedQueue.addJob(projectId);
+  return function enqueueProjectEmbedding(userId, projectId) {
+    if (projectEmbedQueue && userId && projectId) {
+      projectEmbedQueue.addJob({ userId, projectId });
     }
   };
 }

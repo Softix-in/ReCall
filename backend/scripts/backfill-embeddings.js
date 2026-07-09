@@ -1,26 +1,30 @@
 const itemsDb = require('../src/db/items');
-const chromaDb = require('../src/db/chroma');
+const embeddingService = require('../src/services/embedding-service');
 const { startEmbedService } = require('../src/services/embed-launcher');
+const usersDb = require('../src/db/users');
+const config = require('../src/config');
 
 async function main() {
   await startEmbedService();
 
-  const items = itemsDb.listDoneItems({ limit: 10_000 });
+  const bootstrapUser = await usersDb.getOrCreateBootstrapUser(config.BOOTSTRAP_USER_EMAIL);
+  const userId = bootstrapUser.id;
+
+  const items = await itemsDb.listDoneItems(userId, { limit: 10_000 });
   let embedded = 0;
   let skipped = 0;
   let failed = 0;
 
-  console.log(`Backfilling embeddings for ${items.length} done items...`);
+  console.log(`Backfilling embeddings for ${items.length} done items (user ${userId})...`);
 
   for (const item of items) {
     try {
-      const existing = await chromaDb.getVector(item.id);
-      if (existing?.embedding?.length) {
+      if (item.embedding) {
         skipped += 1;
         continue;
       }
 
-      await chromaDb.upsertItemVector(item);
+      await embeddingService.embedAndStoreItem(userId, item);
       embedded += 1;
       console.log(`Embedded: ${item.id} — ${item.title || item.url}`);
     } catch (error) {

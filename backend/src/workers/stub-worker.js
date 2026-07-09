@@ -7,13 +7,15 @@ function sleep(ms) {
 }
 
 async function processItem(itemId) {
-  const item = itemsDb.getItemById(itemId);
+  const item = await itemsDb.getItemByIdInternal(itemId);
 
   if (!item) {
     throw new Error(`Item not found: ${itemId}`);
   }
 
-  itemsDb.updateItem(itemId, { processing: 'processing' });
+  const userId = item.user_id;
+
+  await itemsDb.updateItem(userId, itemId, { processing: 'processing' });
 
   await sleep(STUB_DELAY_MS);
 
@@ -21,7 +23,7 @@ async function processItem(itemId) {
     throw new Error('Simulated pipeline failure');
   }
 
-  itemsDb.updateItem(itemId, {
+  await itemsDb.updateItem(userId, itemId, {
     processing: 'done',
     processed_at: Date.now(),
     title: item.title || `Stub title for ${item.domain || 'saved item'}`,

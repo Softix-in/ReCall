@@ -4,7 +4,6 @@ const { execFileSync } = require('child_process');
 const cron = require('node-cron');
 const config = require('../config');
 const { logDaemon } = require('../utils/logger');
-const { getSettings } = require('./settings-service');
 
 let scheduledTask = null;
 
@@ -48,13 +47,7 @@ function createZipArchive(sourcePaths, outputPath) {
     fs.mkdirSync(tempDir, { recursive: true });
 
     for (const source of sourcePaths) {
-      if (!fs.existsSync(source)) {
-        continue;
-      }
-
-      const destName = path.basename(source);
-      const dest = path.join(tempDir, destName);
-
+      const dest = path.join(tempDir, path.basename(source));
       if (fs.statSync(source).isDirectory()) {
         fs.cpSync(source, dest, { recursive: true });
       } else {
@@ -62,25 +55,13 @@ function createZipArchive(sourcePaths, outputPath) {
       }
     }
 
-    if (fs.existsSync(outputPath)) {
-      fs.unlinkSync(outputPath);
-    }
-
-    execFileSync(
-      'powershell',
-      [
-        '-NoProfile',
-        '-Command',
-        `Compress-Archive -Path '${tempDir}\\*' -DestinationPath '${outputPath}' -Force`,
-      ],
-      { stdio: 'pipe' }
-    );
-
+    const zipBin = 'tar';
+    execFileSync(zipBin, ['-a', '-cf', outputPath, '.'], { cwd: tempDir, stdio: 'pipe' });
     fs.rmSync(tempDir, { recursive: true, force: true });
     return;
   }
 
-  const zipBin = process.platform === 'darwin' ? 'zip' : 'zip';
+  const zipBin = 'zip';
   const args = ['-r', outputPath, ...sourcePaths.map((p) => path.basename(p))];
   const cwd = path.dirname(sourcePaths[0]);
 
@@ -88,25 +69,25 @@ function createZipArchive(sourcePaths, outputPath) {
 }
 
 function runBackup() {
-  const settings = getSettings();
+  const backupDir = config.BACKUPS_DIR;
+  const backupEnabled = process.env.BACKUP_ENABLED !== 'false';
 
-  if (!settings.backupEnabled) {
+  if (!backupEnabled) {
     return { skipped: true, reason: 'backups disabled' };
   }
 
-  const backupDir = settings.backupDir;
   fs.mkdirSync(backupDir, { recursive: true });
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const outputPath = path.join(backupDir, `recall-backup-${stamp}.zip`);
 
   const sources = [
-    config.DB_PATH,
-    config.CHROMA_DIR,
+    config.TRANSCRIPTS_DIR,
+    config.THUMBNAILS_DIR,
   ].filter((source) => fs.existsSync(source));
 
   if (sources.length === 0) {
-    return { skipped: true, reason: 'no data to backup' };
+    return { skipped: true, reason: 'no local files to backup' };
   }
 
   try {
@@ -116,7 +97,8 @@ function runBackup() {
       execFileSync('zip', ['-r', outputPath, ...sources], { stdio: 'pipe' });
     }
 
-    pruneOldBackups(backupDir, settings.backupRetentionDays);
+    const retentionDays = Number(process.env.BACKUP_RETENTION_DAYS) || 7;
+    pruneOldBackups(backupDir, retentionDays);
     logDaemon('info', `Backup created: ${outputPath}`);
 
     return { ok: true, path: outputPath };
@@ -131,13 +113,11 @@ function startBackupScheduler() {
     scheduledTask.stop();
   }
 
-  const settings = getSettings();
-
-  if (!settings.backupEnabled) {
+  if (process.env.BACKUP_ENABLED === 'false') {
     return;
   }
 
-  const hour = settings.backupHourUtc;
+  const hour = Number(process.env.BACKUP_HOUR_UTC) || 3;
   const expression = `0 ${hour} * * *`;
 
   scheduledTask = cron.schedule(expression, () => {

@@ -38,7 +38,7 @@ async function request(path, options = {}) {
     if (!response.ok) {
       throw new EmbedClientError(
         data?.detail || data?.error || `Embed service error (${response.status})`,
-        response.status
+        response.status,
       );
     }
 
@@ -71,47 +71,8 @@ async function embedText(text) {
   return data.embedding;
 }
 
-async function upsertVector(id, embedding, metadata = {}, document = '') {
-  const sanitizedMetadata = Object.fromEntries(
-    Object.entries(metadata).filter(([, value]) => value !== null && value !== undefined)
-  );
-
-  return request('/vectors/upsert', {
-    method: 'POST',
-    body: {
-      id,
-      embedding,
-      metadata: sanitizedMetadata,
-      document,
-    },
-  });
-}
-
-async function queryVectors(embedding, n = 20) {
-  const data = await request('/vectors/query', {
-    method: 'POST',
-    body: { embedding, n },
-  });
-
-  return data.results ?? [];
-}
-
-async function getVector(id) {
-  return request(`/vectors/${encodeURIComponent(id)}`);
-}
-
-async function deleteVector(id) {
-  return request(`/vectors/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  });
-}
-
 module.exports = {
   EmbedClientError,
   checkHealth,
   embedText,
-  upsertVector,
-  queryVectors,
-  getVector,
-  deleteVector,
 };

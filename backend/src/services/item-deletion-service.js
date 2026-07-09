@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const itemsDb = require('../db/items');
-const chromaDb = require('../db/chroma');
 const { isTestItem } = require('../utils/test-data');
 
 function removeFileIfExists(relativePath) {
@@ -19,9 +18,9 @@ function removeFileIfExists(relativePath) {
   }
 }
 
-async function deleteItemFully(itemOrId) {
+async function deleteItemFully(userId, itemOrId) {
   const item = typeof itemOrId === 'string'
-    ? itemsDb.getItemById(itemOrId)
+    ? await itemsDb.getItemById(userId, itemOrId)
     : itemOrId;
 
   if (!item) {
@@ -30,16 +29,10 @@ async function deleteItemFully(itemOrId) {
     throw error;
   }
 
-  try {
-    await chromaDb.deleteVector(item.id);
-  } catch {
-    // Vector may not exist for failed or partial items.
-  }
-
   removeFileIfExists(item.transcript);
   removeFileIfExists(item.thumbnail);
 
-  const deleted = itemsDb.deleteItem(item.id);
+  const deleted = await itemsDb.deleteItem(userId, item.id);
 
   if (!deleted) {
     const error = new Error('Item not found');
@@ -50,12 +43,12 @@ async function deleteItemFully(itemOrId) {
   return { id: item.id, url: item.url };
 }
 
-async function clearTestItems() {
-  const testItems = itemsDb.listTestItems();
+async function clearTestItems(userId) {
+  const testItems = await itemsDb.listTestItems(userId);
   const deleted = [];
 
   for (const item of testItems) {
-    const result = await deleteItemFully(item);
+    const result = await deleteItemFully(userId, item);
     deleted.push(result);
   }
 
@@ -65,8 +58,9 @@ async function clearTestItems() {
   };
 }
 
-function countTestItems() {
-  return itemsDb.listTestItems().length;
+async function countTestItems(userId) {
+  const testItems = await itemsDb.listTestItems(userId);
+  return testItems.length;
 }
 
 module.exports = {

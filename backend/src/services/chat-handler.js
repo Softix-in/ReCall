@@ -141,8 +141,8 @@ and generate ATS-friendly professional text. Confirm what you've done after each
 Be concise and action-oriented.`;
 }
 
-function findProject(identifier) {
-  const projects = profileDb.listProjects();
+async function findProject(userId, identifier) {
+  const projects = await profileDb.listProjects(userId);
   const trimmed = identifier?.trim();
 
   if (!trimmed) {
@@ -175,15 +175,15 @@ function getRefreshTargets(toolName) {
   }
 }
 
-async function executeTool(toolName, args, { projectEmbedQueue } = {}) {
+async function executeTool(toolName, args, { userId, projectEmbedQueue } = {}) {
   switch (toolName) {
     case 'update_profile_field': {
-      const profile = profileDb.updateProfile({ [args.field]: args.value });
+      const profile = await profileDb.updateProfile(userId, { [args.field]: args.value });
       return { ok: true, profile };
     }
 
     case 'update_skills': {
-      const profile = profileDb.updateProfile({ skills: args.skills || [] });
+      const profile = await profileDb.updateProfile(userId, { skills: args.skills || [] });
       return { ok: true, profile };
     }
 
@@ -193,7 +193,7 @@ async function executeTool(toolName, args, { projectEmbedQueue } = {}) {
         return { ok: false, error: 'Project name is required' };
       }
 
-      const project = profileDb.createProject({
+      const project = await profileDb.createProject(userId, {
         name,
         tagline: args.tagline,
         description: args.description,
@@ -204,14 +204,14 @@ async function executeTool(toolName, args, { projectEmbedQueue } = {}) {
       });
 
       if (projectEmbedQueue) {
-        projectEmbedQueue.addJob(project.id);
+        projectEmbedQueue.addJob({ userId, projectId: project.id });
       }
 
       return { ok: true, project };
     }
 
     case 'update_project': {
-      const project = findProject(args.project_identifier);
+      const project = await findProject(userId, args.project_identifier);
 
       if (!project) {
         return { ok: false, error: 'Project not found' };
@@ -223,33 +223,34 @@ async function executeTool(toolName, args, { projectEmbedQueue } = {}) {
         return { ok: false, error: 'name must be a non-empty string' };
       }
 
-      const updated = profileDb.updateProject(project.id, fields);
+      const updated = await profileDb.updateProject(userId, project.id, fields);
 
       if (!updated) {
         return { ok: false, error: 'Failed to update project' };
       }
 
-      if (projectEmbedQueue && profileDb.shouldReembedProject(project, fields)) {
-        projectEmbedQueue.addJob(project.id);
+      if (projectEmbedQueue && profileDb.shouldReembedProject(userId, project, fields)) {
+        projectEmbedQueue.addJob({ userId, projectId: project.id });
       }
 
       return { ok: true, project: updated };
     }
 
     case 'delete_project': {
-      const project = findProject(args.project_identifier);
+      const project = await findProject(userId, args.project_identifier);
 
       if (!project) {
         return { ok: false, error: 'Project not found' };
       }
 
-      const deleted = profileDb.deleteProject(project.id);
+      const deleted = await profileDb.deleteProject(userId, project.id);
       return { ok: deleted, project_id: project.id };
     }
 
     case 'analyze_jd': {
-      const settings = profileDb.getAiModelSettings();
+      const settings = await profileDb.getAiModelSettings(userId);
       const analysis = await analyzeJd({
+        userId,
         jdText: args.jd_text,
         streamBullets: false,
         deepMode: args.deep_mode === true || settings.deepAnalysisEnabled,
@@ -260,16 +261,18 @@ async function executeTool(toolName, args, { projectEmbedQueue } = {}) {
     case 'generate_text': {
       if (args.type === 'bio') {
         const result = await generateBio({
+          userId,
           tone: 'professional',
           word_limit: args.word_limit || 80,
           jd_analysis_id: args.jd_analysis_id,
         });
-        const profile = profileDb.updateProfile({ bio_short: result.bio });
+        const profile = await profileDb.updateProfile(userId, { bio_short: result.bio });
         return { ok: true, text: result.bio, profile };
       }
 
       if (args.type === 'pitch') {
         const result = await generatePitch({
+          userId,
           context: args.context,
           word_limit: args.word_limit || 120,
           jd_analysis_id: args.jd_analysis_id,
@@ -279,6 +282,7 @@ async function executeTool(toolName, args, { projectEmbedQueue } = {}) {
 
       if (args.type === 'cover_letter') {
         const result = await generateCoverLetterText({
+          userId,
           jd_analysis_id: args.jd_analysis_id,
           tone: args.context || 'professional',
         });
@@ -305,16 +309,20 @@ function parseToolArguments(raw) {
   return JSON.parse(raw);
 }
 
-async function handleChat(messages, { projectEmbedQueue } = {}) {
-  if (!profileDb.getFireworksApiKey()) {
+async function handleChat(messages, { userId, projectEmbedQueue } = {}) {
+  if (!userId) {
+    throw new LlmError('userId is required', { code: 'validation_error', status: 400 });
+  }
+
+  if (!(await profileDb.getFireworksApiKey(userId))) {
     throw new LlmError('Fireworks API key is not configured', {
       code: 'missing_api_key',
       status: 400,
     });
   }
 
-  const profile = profileDb.getProfile();
-  const projects = profileDb.listProjects();
+  const profile = await profileDb.getProfile(userId);
+  const projects = await profileDb.listProjects(userId);
   const actionsTaken = [];
 
   const conversation = [
@@ -323,7 +331,7 @@ async function handleChat(messages, { projectEmbedQueue } = {}) {
   ];
 
   const tools = PROFILE_TOOLS_LOCAL;
-  let response = await completeWithTools({ messages: conversation, tools });
+  let response = await completeWithTools({ userId, messages: conversation, tools });
   let assistantMessage = response.choices[0]?.message;
 
   for (let turn = 0; turn < 5; turn += 1) {
@@ -364,7 +372,7 @@ async function handleChat(messages, { projectEmbedQueue } = {}) {
       let result;
 
       try {
-        result = await executeTool(toolName, args, { projectEmbedQueue });
+        result = await executeTool(toolName, args, { userId, projectEmbedQueue });
       } catch (error) {
         result = { ok: false, error: error.message };
       }
@@ -383,7 +391,7 @@ async function handleChat(messages, { projectEmbedQueue } = {}) {
       });
     }
 
-    response = await completeWithTools({ messages: conversation, tools });
+    response = await completeWithTools({ userId, messages: conversation, tools });
     assistantMessage = response.choices[0]?.message;
   }
 

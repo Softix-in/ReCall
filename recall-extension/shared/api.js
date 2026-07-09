@@ -1,132 +1,48 @@
-import { BUILTIN_API_KEY, BUILTIN_BACKEND_URL } from './defaults.js';
+import {
+  AuthError,
+  clearSession,
+  ensureValidAccessToken,
+  getAuthHeaders,
+  isAuthError,
+  refreshTokens,
+} from './auth.js';
+import {
+  ensureDefaultConnection,
+  getBackendBase,
+  getExtensionConfig,
+  getConnectionSettings,
+  loadExtensionConfig,
+  saveExtensionConfig,
+} from './config.js';
 
-const LOCAL_API_BASE = 'http://127.0.0.1:7878';
-const STORAGE_KEYS = {
-  backendUrl: 'recallBackendUrl',
-  apiKey: 'recallApiKey',
+export {
+  AuthError,
+  isAuthError,
+  ensureDefaultConnection,
+  getExtensionConfig,
+  loadExtensionConfig,
+  saveExtensionConfig,
+  getBackendBase,
+  getConnectionSettings,
 };
 
-function resolveBackendUrl(storedUrl) {
-  if (storedUrl) {
-    return storedUrl.replace(/\/$/, '');
-  }
+const PUBLIC_PATHS = new Set([
+  '/health',
+  '/auth/login',
+  '/auth/register',
+  '/auth/refresh',
+  '/auth/forgot-password',
+  '/auth/verify-email',
+  '/auth/reset-password',
+  '/auth/confirm-email-change',
+]);
 
-  if (BUILTIN_BACKEND_URL) {
-    return BUILTIN_BACKEND_URL.replace(/\/$/, '');
-  }
-
-  return LOCAL_API_BASE;
+function isPublicPath(path) {
+  const normalized = path.split('?')[0];
+  return PUBLIC_PATHS.has(normalized);
 }
 
-function resolveApiKey(storedKey) {
-  if (storedKey) {
-    return storedKey;
-  }
-
-  return BUILTIN_API_KEY || '';
-}
-
-export const API_BASE = BUILTIN_BACKEND_URL || LOCAL_API_BASE;
-
-export async function getExtensionConfig() {
-  if (typeof chrome === 'undefined' || !chrome.storage?.local) {
-    return {
-      base: resolveBackendUrl(''),
-      apiKey: resolveApiKey(''),
-    };
-  }
-
-  const stored = await chrome.storage.local.get([
-    STORAGE_KEYS.backendUrl,
-    STORAGE_KEYS.apiKey,
-  ]);
-
-  return {
-    base: resolveBackendUrl(stored[STORAGE_KEYS.backendUrl]),
-    apiKey: resolveApiKey(stored[STORAGE_KEYS.apiKey]),
-  };
-}
-
-/** Seed Chrome storage from defaults.js on first install (no Settings step). */
-export async function ensureDefaultConnection() {
-  if (typeof chrome === 'undefined' || !chrome.storage?.local) {
-    return;
-  }
-
-  const stored = await chrome.storage.local.get([
-    STORAGE_KEYS.backendUrl,
-    STORAGE_KEYS.apiKey,
-    'recallDefaultsSeeded',
-  ]);
-
-  if (stored.recallDefaultsSeeded) {
-    return;
-  }
-
-  const payload = { recallDefaultsSeeded: true };
-
-  if (!stored[STORAGE_KEYS.backendUrl] && BUILTIN_BACKEND_URL) {
-    payload[STORAGE_KEYS.backendUrl] = BUILTIN_BACKEND_URL.replace(/\/$/, '');
-  }
-
-  if (!stored[STORAGE_KEYS.apiKey] && BUILTIN_API_KEY) {
-    payload[STORAGE_KEYS.apiKey] = BUILTIN_API_KEY;
-  }
-
-  await chrome.storage.local.set(payload);
-}
-
-export async function saveExtensionConfig({ backendUrl, apiKey }) {
-  const payload = {};
-
-  if (backendUrl !== undefined) {
-    payload[STORAGE_KEYS.backendUrl] = backendUrl.trim().replace(/\/$/, '') || resolveBackendUrl('');
-  }
-
-  if (apiKey !== undefined) {
-    payload[STORAGE_KEYS.apiKey] = apiKey.trim();
-  }
-
-  await chrome.storage.local.set(payload);
-}
-
-export async function getConnectionSettings() {
-  return getExtensionConfig();
-}
-
-export async function loadExtensionConfig() {
-  const { base, apiKey } = await getExtensionConfig();
-  return {
-    backendUrl: base,
-    apiKey,
-  };
-}
-
-async function buildAuthHeaders(apiKey) {
-  if (!apiKey) {
-    return {};
-  }
-
-  return {
-    Authorization: `Bearer ${apiKey}`,
-  };
-}
-
-async function request(path, options = {}) {
-  const { signal, ...fetchOptions } = options;
-  const { base, apiKey } = await getExtensionConfig();
-
-  const response = await fetch(`${base}${path}`, {
-    headers: {
-      Accept: 'application/json',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(await buildAuthHeaders(apiKey)),
-      ...options.headers,
-    },
-    signal,
-    ...fetchOptions,
-  });
-
+async function parseResponse(response) {
   let data = null;
 
   try {
@@ -135,18 +51,96 @@ async function request(path, options = {}) {
     data = null;
   }
 
+  return data;
+}
+
+function buildRequestError(data, status) {
+  const error = new Error(data?.error || data?.message || `Request failed (${status})`);
+  error.status = status;
+  error.code = data?.code || data?.error;
+  error.data = data;
+
+  if (status === 401 || (status === 403 && data?.error === 'email_not_verified')) {
+    const authError = new AuthError(error.message, { status, code: data?.error || error.code });
+    authError.data = data;
+    return authError;
+  }
+
+  return error;
+}
+
+async function request(path, options = {}, { retryOn401 = true } = {}) {
+  const { signal, skipAuth = false, ...fetchOptions } = options;
+  const base = await getBackendBase();
+  const needsAuth = !skipAuth && !isPublicPath(path);
+
+  if (needsAuth) {
+    await ensureValidAccessToken();
+  }
+
+  const headers = {
+    Accept: 'application/json',
+    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(needsAuth ? await getAuthHeaders() : {}),
+    ...options.headers,
+  };
+
+  const response = await fetch(`${base}${path}`, {
+    signal,
+    ...fetchOptions,
+    headers,
+  });
+
+  let data = await parseResponse(response);
+
+  if (response.status === 401 && needsAuth && retryOn401) {
+    try {
+      await refreshTokens();
+    } catch {
+      await clearSession();
+      throw new AuthError('Session expired — sign in again', { status: 401, code: 'auth_required' });
+    }
+
+    return request(path, options, { retryOn401: false });
+  }
+
   if (!response.ok) {
-    const error = new Error(data?.error || `Request failed (${response.status})`);
-    error.status = response.status;
-    error.data = data;
-    throw error;
+    throw buildRequestError(data, response.status);
   }
 
   return data;
 }
 
+async function authenticatedFetch(path, options = {}, { retryOn401 = true } = {}) {
+  const base = await getBackendBase();
+  await ensureValidAccessToken();
+
+  const response = await fetch(`${base}${path}`, {
+    ...options,
+    headers: {
+      Accept: options.headers?.Accept || 'application/json',
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(await getAuthHeaders()),
+      ...options.headers,
+    },
+  });
+
+  if (response.status === 401 && retryOn401) {
+    try {
+      await refreshTokens();
+    } catch {
+      await clearSession();
+      throw new AuthError('Session expired — sign in again', { status: 401, code: 'auth_required' });
+    }
+
+    return authenticatedFetch(path, options, { retryOn401: false });
+  }
+
+  return response;
+}
+
 export function health() {
-  return request('/health');
+  return request('/health', { skipAuth: true });
 }
 
 export function capture(payload) {
@@ -260,10 +254,25 @@ export function updateItemTags(id, tags) {
 }
 
 export async function getExportUrl(format = 'json', type = null) {
-  const { base } = await getExtensionConfig();
+  const base = await getBackendBase();
   const params = new URLSearchParams({ format });
   if (type) params.set('type', type);
   return `${base}/export?${params}`;
+}
+
+export async function downloadExport(format = 'json', type = null) {
+  const params = new URLSearchParams({ format });
+  if (type) params.set('type', type);
+  const response = await authenticatedFetch(`/export?${params}`, {
+    headers: { Accept: '*/*' },
+  });
+
+  if (!response.ok) {
+    const data = await parseResponse(response);
+    throw buildRequestError(data, response.status);
+  }
+
+  return response.blob();
 }
 
 export function getAskStatus() {
@@ -364,14 +373,10 @@ export function getJdAnalysis(id) {
 }
 
 export async function analyzeJd(jdText, { onEvent, streamBullets = true } = {}) {
-  const { base, apiKey } = await getExtensionConfig();
-
-  const response = await fetch(`${base}/career/analyze-jd`, {
+  const response = await authenticatedFetch('/career/analyze-jd', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
       Accept: streamBullets ? 'text/event-stream' : 'application/json',
-      ...(await buildAuthHeaders(apiKey)),
     },
     body: JSON.stringify({
       jd_text: jdText,
@@ -380,19 +385,8 @@ export async function analyzeJd(jdText, { onEvent, streamBullets = true } = {}) 
   });
 
   if (!response.ok) {
-    let data = null;
-
-    try {
-      data = await response.json();
-    } catch {
-      data = null;
-    }
-
-    const error = new Error(data?.error || `Request failed (${response.status})`);
-    error.status = response.status;
-    error.code = data?.code || data?.error;
-    error.data = data;
-    throw error;
+    const data = await parseResponse(response);
+    throw buildRequestError(data, response.status);
   }
 
   if (!streamBullets) {
@@ -453,33 +447,19 @@ export async function analyzeJd(jdText, { onEvent, streamBullets = true } = {}) 
 }
 
 export async function buildResume(payload) {
-  const { base, apiKey } = await getExtensionConfig();
   const format = payload.format || 'json';
 
-  const response = await fetch(`${base}/career/build-resume`, {
+  const response = await authenticatedFetch('/career/build-resume', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
       Accept: format === 'json' ? 'application/json' : '*/*',
-      ...(await buildAuthHeaders(apiKey)),
     },
     body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
-    let data = null;
-
-    try {
-      data = await response.json();
-    } catch {
-      data = null;
-    }
-
-    const error = new Error(data?.error || `Request failed (${response.status})`);
-    error.status = response.status;
-    error.code = data?.code || data?.error;
-    error.data = data;
-    throw error;
+    const data = await parseResponse(response);
+    throw buildRequestError(data, response.status);
   }
 
   const resume_id = response.headers.get('X-Resume-Id');
@@ -521,31 +501,17 @@ export function generatePitch(payload = {}) {
 }
 
 export async function generateCoverLetter(payload = {}, { onToken } = {}) {
-  const { base, apiKey } = await getExtensionConfig();
-
-  const response = await fetch(`${base}/career/generate/cover-letter`, {
+  const response = await authenticatedFetch('/career/generate/cover-letter', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
       Accept: 'text/event-stream',
-      ...(await buildAuthHeaders(apiKey)),
     },
     body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
-    let data = null;
-
-    try {
-      data = await response.json();
-    } catch {
-      data = null;
-    }
-
-    const error = new Error(data?.error || `Request failed (${response.status})`);
-    error.status = response.status;
-    error.code = data?.code || data?.error;
-    throw error;
+    const data = await parseResponse(response);
+    throw buildRequestError(data, response.status);
   }
 
   if (!response.body) {
@@ -591,16 +557,4 @@ export async function generateCoverLetter(payload = {}, { onToken } = {}) {
   return { text: fullText };
 }
 
-export async function authenticatedFetch(path, options = {}) {
-  const { base, apiKey } = await getExtensionConfig();
-
-  return fetch(`${base}${path}`, {
-    ...options,
-    headers: {
-      Accept: 'application/json',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(await buildAuthHeaders(apiKey)),
-      ...options.headers,
-    },
-  });
-}
+export { authenticatedFetch };

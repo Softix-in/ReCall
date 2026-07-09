@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign in — Recall</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+    <link rel="stylesheet" href="login.css" />
+  </head>
+  <body>
+    <main class="auth-page">
+      <header class="auth-header">
+        <img src="../icons/logo.svg" width="36" height="36" alt="" />
+        <div>
+          <h1>Recall</h1>
+          <p id="auth-subtitle">Sign in to your library</p>
+        </div>
+      </header>
+
+      <p class="backend-hint" id="backend-hint"></p>
+
+      <div class="error-banner" id="error-banner" hidden></div>
+      <div class="success-banner" id="success-banner" hidden></div>
+
+      <form id="auth-form" class="auth-form">
+        <label>
+          Email
+          <input type="email" id="email" autocomplete="username" required />
+        </label>
+
+        <label id="password-label">
+          Password
+          <span class="password-field">
+            <input type="password" id="password" autocomplete="current-password" minlength="8" required />
+            <button type="button" class="password-toggle" id="toggle-password" aria-label="Show password" title="Show password">Show</button>
+          </span>
+        </label>
+
+        <label id="confirm-password-label" hidden>
+          Confirm password
+          <span class="password-field">
+            <input type="password" id="confirm-password" autocomplete="new-password" minlength="8" />
+            <button type="button" class="password-toggle" id="toggle-confirm-password" aria-label="Show confirm password" title="Show password">Show</button>
+          </span>
+        </label>
+
+        <button type="submit" class="btn-primary" id="submit-btn">Sign in</button>
+      </form>
+
+      <p class="auth-switch">
+        <button type="button" class="link-btn" id="mode-toggle">Create an account</button>
+        <span id="forgot-wrap"> · <button type="button" class="link-btn" id="forgot-toggle">Forgot password?</button></span>
+      </p>
+
+      <p class="settings-link">
+        <a href="#" id="settings-link">Backend settings</a>
+      </p>
+    </main>
+
+    <script type="module" src="login.js"></script>
+  </body>
+</html>
