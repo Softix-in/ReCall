@@ -18,6 +18,10 @@ const { createCareerRouter } = require('./routes/career');
 const { createAuthRouter } = require('./routes/auth');
 const { ProjectEmbedQueue } = require('./queue/project-embed-queue');
 const { embedProject } = require('./workers/project-embed-worker');
+const { ResearchQueue } = require('./queue/research-queue');
+const { processResearchJob } = require('./workers/startup-research-worker');
+const { createResearchRouter } = require('./routes/research');
+const researchDb = require('./db/research');
 const { startBackupScheduler, stopBackupScheduler } = require('./services/backup-service');
 const { logDaemon } = require('./utils/logger');
 const { startEmbedService, stopEmbedService } = require('./services/embed-launcher');
@@ -28,6 +32,7 @@ const { createEmailVerifiedMiddleware } = require('./middleware/email-verified')
 
 let queue;
 let projectEmbedQueue;
+let researchQueue;
 let server;
 
 async function resumeStuckJobs(activeQueue) {
@@ -48,6 +53,32 @@ async function resumeStuckJobs(activeQueue) {
       activeQueue.addJob({ itemId: item.id, url: item.url });
     } catch (error) {
       logDaemon('error', `Failed to resume item ${item.id}`, error);
+    }
+  }
+}
+
+async function resumeStuckResearchJobs(activeQueue) {
+  const stuck = await researchDb.listStuckJobs();
+
+  if (stuck.length === 0) {
+    return;
+  }
+
+  logDaemon('info', `Resuming ${stuck.length} research job(s) from previous session`);
+
+  for (const job of stuck) {
+    if (job.status === 'running') {
+      await researchDb.updateJob(job.user_id, job.id, { status: 'queued' });
+    }
+
+    try {
+      activeQueue.addJob({
+        jobId: job.id,
+        companyId: job.company_id,
+        userId: job.user_id,
+      });
+    } catch (error) {
+      logDaemon('error', `Failed to resume research job ${job.id}`, error);
     }
   }
 }
@@ -107,7 +138,27 @@ async function bootstrap() {
 
   projectEmbedQueue = new ProjectEmbedQueue(embedProject);
 
+  researchQueue = new ResearchQueue(processResearchJob, {
+    onPermanentFailure: async (jobId, error) => {
+      const job = await researchDb.getJobInternal(jobId);
+      if (!job) return;
+
+      await researchDb.updateJob(job.user_id, jobId, {
+        status: 'failed',
+        error_message: error.message,
+        completed_at: Date.now(),
+      });
+
+      await researchDb.updateCompany(job.user_id, job.company_id, {
+        status: 'needs_review',
+      });
+
+      logDaemon('error', `Research job ${jobId} failed permanently: ${error.message}`, error);
+    },
+  });
+
   await resumeStuckJobs(queue);
+  await resumeStuckResearchJobs(researchQueue);
   startBackupScheduler();
 
   const app = express();
@@ -166,6 +217,7 @@ async function bootstrap() {
   app.use(askRouter);
   app.use(createProfileRouter(projectEmbedQueue));
   app.use(createCareerRouter({ projectEmbedQueue }));
+  app.use(createResearchRouter(researchQueue));
 
   app.use((req, res) => {
     res.status(404).json({ error: 'Not found', path: req.path });
@@ -175,7 +227,7 @@ async function bootstrap() {
     console.log(`Recall backend listening on http://${config.HOST}:${config.PORT}`);
   });
 
-  return { app, server, queue, projectEmbedQueue };
+  return { app, server, queue, projectEmbedQueue, researchQueue };
 }
 
 async function shutdown(signal) {
@@ -201,6 +253,15 @@ async function shutdown(signal) {
       await projectEmbedQueue.drain();
     } catch (error) {
       console.error(`Error while draining project embed queue: ${error.message}`);
+    }
+  }
+
+  if (researchQueue) {
+    console.log('Draining research queue...');
+    try {
+      await researchQueue.drain();
+    } catch (error) {
+      console.error(`Error while draining research queue: ${error.message}`);
     }
   }
 

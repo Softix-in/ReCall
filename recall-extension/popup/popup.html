@@ -17,6 +17,7 @@
         </div>
         <div class="header-links">
           <a class="search-link" id="open-search" href="#">Search ↗</a>
+          <a class="search-link" id="open-research" href="#">YC ↗</a>
           <a class="search-link" id="open-profile" href="#">Profile ↗</a>
         </div>
       </header>
@@ -25,6 +26,7 @@
         <button class="tab-btn active" data-tab="capture" role="tab">Capture</button>
         <button class="tab-btn" data-tab="vault" role="tab">Link Vault</button>
         <button class="tab-btn" data-tab="recent" role="tab">Recent</button>
+        <button class="tab-btn" data-tab="research" role="tab">YC</button>
       </nav>
 
       <section class="panel active" id="panel-capture" role="tabpanel">
@@ -87,6 +89,32 @@
         <div class="search-status" id="recent-search-status"></div>
         <div class="suggestion-row" id="recent-suggestions"></div>
         <div class="recent-list" id="recent-list"></div>
+      </section>
+
+      <section class="panel" id="panel-research" role="tabpanel">
+        <div class="research-detect" id="research-detect">
+          <p class="research-hint" id="research-hint">Open a YC company page to research it.</p>
+          <div class="research-card" id="research-card" hidden>
+            <span class="research-badge" id="research-badge">YC</span>
+            <h2 id="research-name">—</h2>
+            <p id="research-batch" class="research-meta"></p>
+            <p id="research-desc" class="research-desc"></p>
+            <p id="research-founders" class="research-meta"></p>
+          </div>
+        </div>
+
+        <div class="actions research-actions">
+          <label class="field-label" for="research-note">Why interesting?</label>
+          <textarea id="research-note" placeholder="India angle, adjacent idea, personal fit…"></textarea>
+
+          <label class="field-label" for="research-tags">Tags (comma-separated)</label>
+          <input type="text" id="research-tags" placeholder="AI agents, India opportunity, too crowded" autocomplete="off" />
+
+          <button class="btn btn-primary" id="research-btn" disabled>Research this startup</button>
+          <button class="btn btn-secondary" id="research-board-btn" type="button">Open research board ↗</button>
+
+          <p class="research-status" id="research-status" hidden></p>
+        </div>
       </section>
 
       <footer class="footer">

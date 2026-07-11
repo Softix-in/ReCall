@@ -27,6 +27,184 @@ function getSelectedText() {
   return text.length > 0 ? text : null;
 }
 
+function isYcCompanyPage() {
+  try {
+    const host = window.location.hostname.replace(/^www\./i, '').toLowerCase();
+    return host === 'ycombinator.com' && /^\/companies\/[^/]+\/?$/i.test(window.location.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function textOf(el) {
+  return el?.textContent?.replace(/\s+/g, ' ').trim() || '';
+}
+
+function findByLabel(labels) {
+  const nodes = Array.from(document.querySelectorAll('div, span, dt, th, p, li'));
+  for (const node of nodes) {
+    const text = textOf(node).toLowerCase();
+    if (!labels.some((label) => text === label || text.startsWith(`${label}:`))) {
+      continue;
+    }
+
+    const next = node.nextElementSibling;
+    if (next) {
+      const value = textOf(next);
+      if (value) return value;
+    }
+
+    const parent = node.parentElement;
+    if (parent) {
+      const clone = parent.cloneNode(true);
+      const first = clone.firstElementChild;
+      if (first) first.remove();
+      const value = textOf(clone);
+      if (value && value.toLowerCase() !== text) return value;
+    }
+  }
+  return null;
+}
+
+function extractWebsite() {
+  const links = Array.from(document.querySelectorAll('a[href^="http"]'));
+  for (const link of links) {
+    const href = link.href;
+    const label = textOf(link).toLowerCase();
+    if (/ycombinator\.com|linkedin\.com|twitter\.com|x\.com|github\.com|facebook\.com/i.test(href)) {
+      continue;
+    }
+    if (label.includes('website') || label.includes('company') || label === 'site') {
+      return href;
+    }
+  }
+
+  // Prefer first external non-social link in main content
+  for (const link of links) {
+    const href = link.href;
+    if (/ycombinator\.com|linkedin\.com|twitter\.com|x\.com|github\.com|cloudflare|google/i.test(href)) {
+      continue;
+    }
+    try {
+      const host = new URL(href).hostname;
+      if (host && !host.includes('ycombinator')) {
+        return href;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
+function extractFounders() {
+  const founders = [];
+  const seen = new Set();
+
+  // YC pages often list founders with LinkedIn links nearby
+  const anchors = Array.from(document.querySelectorAll('a[href*="linkedin.com"], a[href*="twitter.com"], a[href*="x.com"], a[href*="github.com"]'));
+
+  for (const anchor of anchors) {
+    const card = anchor.closest('div, li, article, section') || anchor.parentElement;
+    if (!card) continue;
+
+    const nameEl =
+      card.querySelector('h3, h4, strong, a[href*="/people/"], [class*="name"]') ||
+      card.querySelector('a');
+
+    let name = textOf(nameEl);
+    if (!name || name.length < 2 || name.length > 80) {
+      name = textOf(card).split(/LinkedIn|Twitter|GitHub|X\b/i)[0].trim().slice(0, 80);
+    }
+
+    // Prefer text that looks like a person name (2+ words, letters)
+    if (!/^[A-Za-z][A-Za-z.'\-]+(\s+[A-Za-z][A-Za-z.'\-]+)+/.test(name)) {
+      continue;
+    }
+
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const links = Array.from(card.querySelectorAll('a[href]'));
+    const founder = {
+      full_name: name,
+      current_role: null,
+      linkedin_url: null,
+      twitter_url: null,
+      github_url: null,
+      personal_website: null,
+    };
+
+    for (const link of links) {
+      const href = link.href;
+      if (/linkedin\.com/i.test(href)) founder.linkedin_url = href;
+      else if (/twitter\.com|x\.com/i.test(href)) founder.twitter_url = href;
+      else if (/github\.com/i.test(href)) founder.github_url = href;
+    }
+
+    const roleMatch = textOf(card).match(/\b(CEO|CTO|COO|Founder|Co-Founder|Engineer|CPO)\b[^,]{0,40}/i);
+    if (roleMatch) {
+      founder.current_role = roleMatch[0].trim();
+    }
+
+    founders.push(founder);
+    if (founders.length >= 8) break;
+  }
+
+  return founders;
+}
+
+function extractBatch() {
+  const body = document.body?.innerText || '';
+  const match = body.match(/\b((?:Winter|Spring|Summer|Fall)\s+20\d{2}|W\d{2}|S\d{2}|F\d{2})\b/);
+  if (match) return match[1];
+
+  return findByLabel(['batch', 'yc batch']) || null;
+}
+
+function scrapeYcCompany() {
+  if (!isYcCompanyPage()) {
+    return null;
+  }
+
+  const page = scrapePage();
+  const h1 = document.querySelector('h1');
+  const companyName =
+    textOf(h1) ||
+    page.og_title?.split('|')[0]?.trim() ||
+    page.title?.split('|')[0]?.trim() ||
+    window.location.pathname.split('/').filter(Boolean).pop();
+
+  const description =
+    page.og_description ||
+    textOf(document.querySelector('[class*="description"], [data-testid*="description"]')) ||
+    findByLabel(['description', 'about']) ||
+    null;
+
+  const industry = findByLabel(['industry', 'industries', 'tags']) || null;
+  const location = findByLabel(['location', 'based in', 'hq']) || null;
+  const teamSize = findByLabel(['team size', 'employees', 'headcount']) || null;
+
+  const visibleText = (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 50_000);
+
+  return {
+    page_type: 'yc_company',
+    ...page,
+    yc_url: window.location.href.split('#')[0],
+    company_name: companyName,
+    batch: extractBatch(),
+    short_description: description,
+    industry,
+    location,
+    team_size: teamSize,
+    website: extractWebsite(),
+    founders: extractFounders(),
+    visible_text: visibleText,
+  };
+}
+
 function showHighlightToast() {
   if (document.getElementById('recall-hl-toast')) return;
 
@@ -56,9 +234,72 @@ function showHighlightToast() {
   setTimeout(() => toast.remove(), 2800);
 }
 
+function ensureYcResearchFab() {
+  if (!isYcCompanyPage()) {
+    document.getElementById('recall-yc-fab')?.remove();
+    return;
+  }
+
+  if (document.getElementById('recall-yc-fab')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'recall-yc-fab';
+  btn.type = 'button';
+  btn.textContent = 'Research startup';
+  btn.title = 'Save to Recall YC research';
+  btn.style.cssText = `
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 2147483646;
+    border: none;
+    border-radius: 999px;
+    padding: 12px 18px;
+    background: #111;
+    color: #fff;
+    font: 600 13px Inter, system-ui, sans-serif;
+    cursor: pointer;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  `;
+
+  btn.addEventListener('click', () => {
+    btn.disabled = true;
+    btn.textContent = 'Queuing…';
+    chrome.runtime.sendMessage(
+      { type: 'RESEARCH_YC_STARTUP', extracted: scrapeYcCompany() },
+      (response) => {
+        btn.disabled = false;
+        if (response?.ok) {
+          btn.textContent = 'Queued ✓';
+          setTimeout(() => {
+            btn.textContent = 'Research startup';
+          }, 2500);
+        } else {
+          btn.textContent = response?.authRequired ? 'Sign in required' : 'Failed — retry';
+          setTimeout(() => {
+            btn.textContent = 'Research startup';
+          }, 2800);
+        }
+      },
+    );
+  });
+
+  document.body.appendChild(btn);
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'SCRAPE_PAGE') {
     sendResponse({ ok: true, data: scrapePage() });
+    return false;
+  }
+
+  if (message.type === 'SCRAPE_YC_COMPANY') {
+    const data = scrapeYcCompany();
+    if (!data) {
+      sendResponse({ ok: false, error: 'Not a YC company page' });
+      return false;
+    }
+    sendResponse({ ok: true, data });
     return false;
   }
 
@@ -87,3 +328,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return false;
 });
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', ensureYcResearchFab);
+} else {
+  ensureYcResearchFab();
+}
+
+let lastUrl = location.href;
+setInterval(() => {
+  if (location.href !== lastUrl) {
+    lastUrl = location.href;
+    ensureYcResearchFab();
+  }
+}, 1500);

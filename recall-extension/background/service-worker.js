@@ -2,9 +2,11 @@ import {
   capture,
   ensureDefaultConnection,
   getItemStatus,
+  getResearchJob,
   getStatus,
   health,
   isAuthError,
+  researchStartup,
   retryItem,
 } from '../shared/api.js';
 import { isAuthenticated } from '../shared/auth.js';
@@ -203,6 +205,47 @@ async function saveVaultLink(payload) {
     save_mode: payload.save_mode || 'auto_scrape',
     note: payload.note || null,
   });
+}
+
+async function scrapeYcActiveTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  if (!tab?.id) {
+    throw new Error('No active browser tab found');
+  }
+
+  if (isRestrictedTabUrl(tab.url)) {
+    throw new Error('Open a YC company page first, then open Recall.');
+  }
+
+  let response;
+
+  try {
+    response = await sendTabMessage(tab.id, { type: 'SCRAPE_YC_COMPANY' });
+  } catch {
+    await ensureContentScript(tab.id);
+    response = await sendTabMessage(tab.id, { type: 'SCRAPE_YC_COMPANY' });
+  }
+
+  if (!response?.ok || !response.data) {
+    throw new Error(response?.error || 'Not a YC company page. Open ycombinator.com/companies/…');
+  }
+
+  return response.data;
+}
+
+async function startYcResearch({ extracted = null, note = null, tags = [] } = {}) {
+  const data = extracted || (await scrapeYcActiveTab());
+
+  const result = await researchStartup({
+    trigger_url: data.yc_url || data.url,
+    trigger_type: 'yc_company_page',
+    note,
+    tags,
+    extracted: data,
+  });
+
+  return result;
 }
 
 async function pollQueue() {
@@ -429,6 +472,31 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         case 'SAVE_VAULT_LINK': {
           const result = await saveVaultLink(message.payload);
           sendResponse({ ok: true, result });
+          break;
+        }
+        case 'SCRAPE_YC_ACTIVE_TAB': {
+          const data = await scrapeYcActiveTab();
+          sendResponse({ ok: true, data });
+          break;
+        }
+        case 'RESEARCH_YC_STARTUP': {
+          if (!(await isAuthenticated())) {
+            notifyAuthRequired();
+            sendResponse({ ok: false, error: 'Sign in required', authRequired: true });
+            break;
+          }
+
+          const result = await startYcResearch({
+            extracted: message.extracted || null,
+            note: message.note || null,
+            tags: message.tags || [],
+          });
+          sendResponse({ ok: true, result });
+          break;
+        }
+        case 'GET_RESEARCH_JOB': {
+          const data = await getResearchJob(message.id);
+          sendResponse({ ok: true, result: data });
           break;
         }
         case 'GET_QUEUE': {

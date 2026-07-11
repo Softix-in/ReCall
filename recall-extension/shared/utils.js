@@ -60,6 +60,12 @@ export function sourceTypeLabel(type) {
       return 'Audio';
     case 'link':
       return 'Link';
+    case 'yc-startup':
+      return 'YC Startup';
+    case 'social-post':
+      return 'Social';
+    case 'pdf':
+      return 'PDF';
     default:
       return type || 'Link';
   }
@@ -73,6 +79,8 @@ export function sourceTypeIcon(type) {
       return '¶';
     case 'audio':
       return '♪';
+    case 'yc-startup':
+      return '◎';
     default:
       return '🔗';
   }

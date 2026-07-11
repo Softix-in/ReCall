@@ -107,6 +107,7 @@ async function fetchBySourceType(sourceType, url, itemId, userId) {
     case 'video':
       return fetchVideoContent(url, itemId, userId);
     case 'article':
+    case 'yc-startup':
       return fetchArticleContent(url, itemId);
     case 'social-post':
       return fetchSocialPostContent(url, itemId);

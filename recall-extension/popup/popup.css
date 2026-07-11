@@ -90,7 +90,7 @@ body {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px;
   padding: 10px 12px 6px;
 }
@@ -99,12 +99,13 @@ body {
   border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
-  padding: 8px 6px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 4px;
   border-radius: 8px;
-  font-size: 12px;
-  font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .tab-btn.active {
@@ -703,4 +704,112 @@ textarea {
 .toast.success {
   border-color: rgba(74,222,128,0.35);
   color: #bbf7d0;
+}
+
+/* ── YC Research ─────────────────────────────────────────────── */
+
+.research-detect {
+  padding: 0 16px 8px;
+}
+
+.research-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 0;
+}
+
+.research-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.research-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--accent-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  margin-bottom: 8px;
+}
+
+.research-card h2 {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin-bottom: 4px;
+}
+
+.research-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.research-desc {
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+  margin-top: 8px;
+}
+
+.research-actions {
+  padding-top: 4px;
+}
+
+.research-actions .field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 10px 0 6px;
+}
+
+.research-actions textarea,
+.research-actions input[type="text"] {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.research-actions textarea {
+  min-height: 64px;
+}
+
+.research-actions textarea:focus,
+.research-actions input[type="text"]:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.research-actions .btn {
+  margin-top: 10px;
+}
+
+.research-status {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+.research-status.failed {
+  color: var(--danger);
+}
+
+.research-status.completed,
+.research-status.needs_review {
+  color: var(--success);
 }

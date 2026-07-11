@@ -9,8 +9,10 @@ const SOURCE_WEIGHT = 0.1;
 const SOURCE_BOOST = {
   video: 1.0,
   article: 0.95,
+  'yc-startup': 1.0,
   'social-post': 0.9,
   link: 0.85,
+  pdf: 0.9,
 };
 
 function isKeywordOriented(query) {

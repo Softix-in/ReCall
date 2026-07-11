@@ -5,6 +5,8 @@ const SOURCE_TYPE_LABELS = {
   article: 'Article',
   'social-post': 'Social post',
   link: 'Link',
+  'yc-startup': 'YC Startup',
+  pdf: 'PDF',
 };
 
 function formatDateIso(ms) {

@@ -30,6 +30,9 @@ const state = {
   vaultMode: 'auto_scrape',
   lastCaptureId: null,
   recentRequestId: 0,
+  ycExtracted: null,
+  researchJobId: null,
+  researchPollTimer: null,
 };
 
 const recentLiveSearch = createLiveSearchRunner({ debounceMs: 220, minLength: 2 });
@@ -62,6 +65,10 @@ function setActiveTab(tabName) {
 
   if (tabName === 'recent') {
     scheduleRecentSearch();
+  }
+
+  if (tabName === 'research') {
+    loadYcResearchPanel();
   }
 }
 
@@ -489,6 +496,126 @@ function updateVaultMode(mode) {
   }
 }
 
+function parseTagsInput(value) {
+  return String(value || '')
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 15);
+}
+
+function renderYcResearchCard(data) {
+  const card = $('#research-card');
+  const hint = $('#research-hint');
+  const btn = $('#research-btn');
+
+  if (!data) {
+    card.hidden = true;
+    hint.hidden = false;
+    hint.textContent = 'Open a YC company page (ycombinator.com/companies/…) to research it.';
+    btn.disabled = true;
+    state.ycExtracted = null;
+    return;
+  }
+
+  hint.hidden = true;
+  card.hidden = false;
+  state.ycExtracted = data;
+
+  $('#research-name').textContent = data.company_name || 'Unknown company';
+  $('#research-batch').textContent = [data.batch, data.industry, data.location].filter(Boolean).join(' · ');
+  $('#research-desc').textContent = data.short_description || data.og_description || '';
+
+  const founders = Array.isArray(data.founders) ? data.founders : [];
+  $('#research-founders').textContent = founders.length
+    ? `Founders: ${founders.map((f) => f.full_name).join(', ')}`
+    : 'Founders: not detected on page';
+
+  btn.disabled = false;
+}
+
+async function loadYcResearchPanel() {
+  const response = await sendMessage({ type: 'SCRAPE_YC_ACTIVE_TAB' });
+
+  if (!response?.ok) {
+    renderYcResearchCard(null);
+    if (response?.error && !/Not a YC/i.test(response.error)) {
+      $('#research-hint').textContent = response.error;
+    }
+    return;
+  }
+
+  renderYcResearchCard(response.data);
+}
+
+function stopResearchPolling() {
+  if (state.researchPollTimer) {
+    clearInterval(state.researchPollTimer);
+    state.researchPollTimer = null;
+  }
+}
+
+function formatResearchProgress(job) {
+  const step = job?.progress?.step || job?.status || 'queued';
+  const labels = {
+    starting: 'Starting…',
+    website_crawl: 'Crawling company website…',
+    founder_enrichment: 'Enriching founders…',
+    ai_analysis: 'Running AI analysis…',
+    news_signals: 'Extracting news signals…',
+    embedding: 'Embedding for search…',
+    done: 'Done',
+    queued: 'Queued…',
+    running: 'Running…',
+    completed: 'Completed',
+    failed: 'Failed',
+    needs_review: 'Needs review',
+  };
+
+  let text = labels[step] || labels[job?.status] || String(step);
+
+  if (job?.progress?.pages_crawled != null) {
+    text += ` · ${job.progress.pages_crawled} page(s)`;
+  }
+  if (job?.progress?.founder_sources != null) {
+    text += ` · ${job.progress.founder_sources} founder source(s)`;
+  }
+  if (job?.progress?.ai_skipped) {
+    text += ' · AI skipped (add Fireworks API key)';
+  }
+  if (job?.error_message) {
+    text += ` — ${job.error_message}`;
+  }
+
+  return text;
+}
+
+async function pollResearchJob() {
+  if (!state.researchJobId) return;
+
+  const response = await sendMessage({ type: 'GET_RESEARCH_JOB', id: state.researchJobId });
+  if (!response?.ok || !response.result?.job) return;
+
+  const { job } = response.result;
+  const statusEl = $('#research-status');
+  statusEl.hidden = false;
+  statusEl.className = `research-status ${job.status}`;
+  statusEl.textContent = formatResearchProgress(job);
+
+  if (['completed', 'failed', 'needs_review'].includes(job.status)) {
+    stopResearchPolling();
+  }
+}
+
+function startResearchPolling(jobId) {
+  stopResearchPolling();
+  state.researchJobId = jobId;
+  pollResearchJob();
+  state.researchPollTimer = setInterval(() => {
+    pollResearchJob().catch(() => {});
+  }, 3000);
+}
+
 function bindEvents() {
   document.querySelectorAll('.tab-btn').forEach((button) => {
     button.addEventListener('click', () => setActiveTab(button.dataset.tab));
@@ -497,6 +624,11 @@ function bindEvents() {
   $('#open-search').addEventListener('click', (event) => {
     event.preventDefault();
     chrome.tabs.create({ url: chrome.runtime.getURL('search/search.html') });
+  });
+
+  $('#open-research').addEventListener('click', (event) => {
+    event.preventDefault();
+    chrome.tabs.create({ url: chrome.runtime.getURL('research/board.html') });
   });
 
   $('#open-profile').addEventListener('click', (event) => {
@@ -623,6 +755,42 @@ function bindEvents() {
   });
 
   $('#recent-search').addEventListener('input', scheduleRecentSearch);
+
+  $('#research-board-btn').addEventListener('click', () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('research/board.html') });
+  });
+
+  $('#research-btn').addEventListener('click', async () => {
+    const btn = $('#research-btn');
+    btn.disabled = true;
+
+    const note = $('#research-note').value.trim();
+    const tags = parseTagsInput($('#research-tags').value);
+
+    const response = await sendMessage({
+      type: 'RESEARCH_YC_STARTUP',
+      extracted: state.ycExtracted,
+      note: note || null,
+      tags,
+    });
+
+    if (response?.authRequired) {
+      window.location.replace(getLoginUrl());
+      return;
+    }
+
+    if (!response?.ok) {
+      showToast(response?.error || 'Research failed', 'error');
+      btn.disabled = false;
+      return;
+    }
+
+    const result = response.result;
+    showToast(`Research queued · ${result.founders_count || 0} founder(s)`);
+    startResearchPolling(result.research_job_id);
+    btn.disabled = false;
+    await refreshFooter();
+  });
 
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'QUEUE_UPDATED') {

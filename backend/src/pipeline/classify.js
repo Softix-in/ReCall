@@ -40,8 +40,22 @@ function isPdfUrl(url) {
   }
 }
 
+function isYcCompanyUrl(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./i, '').toLowerCase();
+    return host === 'ycombinator.com' && /^\/companies\/[^/]+\/?$/i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function classifyUrl(url, metadata = {}) {
   if (isPdfUrl(url)) return 'pdf';
+
+  if (isYcCompanyUrl(url) || metadata.research === true || metadata.trigger_type === 'yc_company_page') {
+    return 'yc-startup';
+  }
 
   const hostname = parseHostname(url);
   const ogType = (metadata.og_type || metadata.ogType || '').toLowerCase();
@@ -83,4 +97,5 @@ function classifyUrl(url, metadata = {}) {
 module.exports = {
   classifyUrl,
   parseHostname,
+  isYcCompanyUrl,
 };

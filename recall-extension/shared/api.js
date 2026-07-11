@@ -286,6 +286,44 @@ export function askLibrary(question, limit = 8) {
   });
 }
 
+export function researchStartup(payload) {
+  return request('/research/startups', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getResearchJob(id) {
+  return request(`/research/jobs/${id}`);
+}
+
+export function listResearchCompanies({ status = null, limit = 50, offset = 0 } = {}) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (status) params.set('status', status);
+  return request(`/research/companies?${params}`);
+}
+
+export function getResearchCompany(id) {
+  return request(`/research/companies/${id}`);
+}
+
+export function updateResearchCompany(id, patch) {
+  return request(`/research/companies/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export function reanalyzeResearchCompany(id) {
+  return request(`/research/companies/${id}/reanalyze`, {
+    method: 'POST',
+  });
+}
+
+export function getResearchStats() {
+  return request('/research/stats');
+}
+
 export function fetchProfile() {
   return request('/profile');
 }
