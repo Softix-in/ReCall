@@ -37,6 +37,7 @@ const state = {
   related: [],
   focusedIndex: -1,
   transcripts: new Map(),
+  knowledgeFiles: new Map(),
   activeRequestId: 0,
   tagEditor: { itemId: null, tags: [] },
 };
@@ -168,6 +169,13 @@ function renderMainResults() {
     .map((item, index) => {
       const transcript = state.transcripts.get(item.id);
       const showTranscript = transcript !== undefined;
+      const knowledge = state.knowledgeFiles.get(item.id);
+      const showKnowledge = knowledge !== undefined;
+      const saveModeLabel = item.save_mode === 'manual_note'
+        ? 'Manual note'
+        : item.save_mode === 'doc_extract'
+          ? 'Doc extract'
+          : 'Auto-scrape';
 
       return `
         <article class="result${index === state.focusedIndex ? ' focused' : ''}" data-index="${index}" data-id="${item.id}">
@@ -182,7 +190,7 @@ function renderMainResults() {
             <span class="chip">${sourceTypeLabel(item.source_type)}</span>
             <span class="chip">${escapeHtml(item.domain || '')}</span>
             <span class="chip">${formatTimeAgo(item.created_at)}</span>
-            <span class="chip">${item.save_mode === 'manual_note' ? 'Manual note' : 'Auto-scrape'}</span>
+            <span class="chip">${saveModeLabel}</span>
             ${item.tags ? item.tags.split(',').filter(Boolean).map((t) => `<span class="chip tag-chip">#${escapeHtml(t.trim())}</span>`).join('') : ''}
           </div>
           <div class="result-actions">
@@ -191,12 +199,18 @@ function renderMainResults() {
                 ? `<button type="button" data-action="transcript" data-id="${item.id}">${showTranscript ? 'Hide transcript' : 'Show transcript'}</button>`
                 : ''
             }
+            ${
+              item.source_type === 'documentation'
+                ? `<button type="button" data-action="knowledge" data-id="${item.id}">${showKnowledge ? 'Hide knowledge' : 'View knowledge'}</button>`
+                : ''
+            }
             <button type="button" data-action="open" data-url="${escapeHtml(item.url)}">Open original</button>
             <button type="button" data-action="tags" data-id="${item.id}" class="${state.tagEditor.itemId === item.id ? 'active' : ''}">${state.tagEditor.itemId === item.id ? 'Close tags' : 'Tags'}</button>
             <button type="button" class="delete-btn" data-action="delete" data-id="${item.id}">Delete</button>
           </div>
           ${state.tagEditor.itemId === item.id ? renderInlineTagEditorHtml() : ''}
           ${showTranscript ? `<div class="transcript">${escapeHtml(transcript || 'Transcript not available.')}</div>` : ''}
+          ${showKnowledge ? `<div class="transcript">${escapeHtml(knowledge || 'Knowledge file not available.')}</div>` : ''}
         </article>
       `;
     })
@@ -210,6 +224,10 @@ function renderMainResults() {
 
   container.querySelectorAll('[data-action="transcript"]').forEach((button) => {
     button.addEventListener('click', () => toggleTranscript(button.dataset.id));
+  });
+
+  container.querySelectorAll('[data-action="knowledge"]').forEach((button) => {
+    button.addEventListener('click', () => toggleKnowledge(button.dataset.id));
   });
 
   container.querySelectorAll('[data-action="tags"]').forEach((button) => {
@@ -275,6 +293,7 @@ async function runLiveSearch(query, { signal, requestId, empty }) {
     state.results = [];
     state.related = [];
     state.transcripts.clear();
+    state.knowledgeFiles.clear();
     state.focusedIndex = -1;
     setPanelVisibility({ showRecommendations: true, showResults: false, showRelated: false });
     await loadRecommendations();
@@ -296,6 +315,7 @@ async function runLiveSearch(query, { signal, requestId, empty }) {
   state.results = result.results || [];
   state.related = result.related || [];
   state.transcripts.clear();
+  state.knowledgeFiles.clear();
   state.focusedIndex = state.results.length > 0 ? 0 : -1;
 
   renderMainResults();
@@ -321,6 +341,23 @@ function scheduleSearch() {
       $('#related-panel').hidden = true;
     }
   });
+}
+
+async function toggleKnowledge(id) {
+  if (state.knowledgeFiles.has(id)) {
+    state.knowledgeFiles.delete(id);
+    renderMainResults();
+    return;
+  }
+
+  try {
+    const data = await getItem(id);
+    state.knowledgeFiles.set(id, data.item.content || 'Knowledge file not available.');
+    renderMainResults();
+  } catch (error) {
+    state.knowledgeFiles.set(id, `Failed to load knowledge file: ${error.message}`);
+    renderMainResults();
+  }
 }
 
 async function toggleTranscript(id) {

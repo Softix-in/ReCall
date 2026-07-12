@@ -3,11 +3,13 @@ import {
   ensureDefaultConnection,
   getItemStatus,
   getResearchJob,
+  getDocCrawlJob,
   getStatus,
   health,
   isAuthError,
   researchStartup,
   retryItem,
+  startDocCrawl,
 } from '../shared/api.js';
 import { isAuthenticated } from '../shared/auth.js';
 import { getLoginUrl } from '../shared/auth-gate.js';
@@ -116,7 +118,7 @@ async function scrapeActiveTab() {
   return response.data;
 }
 
-function buildCapturePayload(scraped, { save_mode = 'auto_scrape', note = null } = {}) {
+function buildCapturePayload(scraped, { save_mode = 'auto_scrape', note = null, capture_meta = null } = {}) {
   return {
     url: scraped.url,
     title: scraped.title,
@@ -128,6 +130,7 @@ function buildCapturePayload(scraped, { save_mode = 'auto_scrape', note = null }
     has_video: scraped.has_video,
     save_mode,
     note,
+    capture_meta,
   };
 }
 
@@ -172,6 +175,57 @@ async function enqueueCapture(payload) {
   }
 }
 
+async function extractDocumentationFromTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  if (!tab?.id) {
+    throw new Error('No active browser tab found');
+  }
+
+  if (isRestrictedTabUrl(tab.url)) {
+    throw new Error(
+      'Open a documentation page first (not Chrome settings, extensions, or a new tab page).'
+    );
+  }
+
+  let response;
+
+  try {
+    response = await sendTabMessage(tab.id, { type: 'EXTRACT_DOCUMENTATION' });
+  } catch {
+    await ensureContentScript(tab.id);
+    response = await sendTabMessage(tab.id, { type: 'EXTRACT_DOCUMENTATION' });
+  }
+
+  if (!response?.ok || !response.data) {
+    throw new Error('Could not extract documentation from this page.');
+  }
+
+  return response.data;
+}
+
+async function extractKnowledgeCurrentTab() {
+  const extracted = await extractDocumentationFromTab();
+
+  return enqueueCapture(
+    buildCapturePayload(extracted, {
+      save_mode: 'doc_extract',
+      capture_meta: {
+        extractor: 'client',
+        hash: extracted.hash,
+        raw_structure: {
+          sections: extracted.sections,
+          char_count: extracted.char_count,
+        },
+      },
+    }),
+  );
+}
+
+async function startDocCrawlJob(payload) {
+  return startDocCrawl(payload);
+}
+
 async function quickSaveCurrentTab() {
   const scraped = await scrapeActiveTab();
   return enqueueCapture(buildCapturePayload(scraped));
@@ -203,7 +257,11 @@ async function saveVaultLink(payload) {
     domain: payload.domain || null,
     has_video: Boolean(payload.has_video),
     save_mode: payload.save_mode || 'auto_scrape',
+    source_type: payload.save_mode === 'doc_extract' ? 'documentation' : undefined,
     note: payload.note || null,
+    capture_meta: payload.save_mode === 'doc_extract'
+      ? { extractor: 'firecrawl', format: 'yaml' }
+      : null,
   });
 }
 
@@ -464,6 +522,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           sendResponse({ ok: true, result });
           break;
         }
+        case 'EXTRACT_KNOWLEDGE': {
+          const result = await extractKnowledgeCurrentTab();
+          sendResponse({ ok: true, result });
+          break;
+        }
+        case 'START_DOC_CRAWL': {
+          const result = await startDocCrawlJob(message.payload);
+          sendResponse({ ok: true, result });
+          break;
+        }
+        case 'GET_DOC_CRAWL_JOB': {
+          const data = await getDocCrawlJob(message.id);
+          sendResponse({ ok: true, result: data });
+          break;
+        }
         case 'SAVE_WITH_NOTE': {
           const result = await saveWithNote(message.note);
           sendResponse({ ok: true, result });
@@ -525,7 +598,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         }
         default:
-          sendResponse({ ok: false, error: 'Unknown message type' });
+          sendResponse({
+            ok: false,
+            error: `Unknown message type: ${message?.type || '(missing)'}. Reload the Recall extension at chrome://extensions.`,
+          });
       }
     } catch (error) {
       const authRequired = isAuthError(error);

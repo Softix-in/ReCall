@@ -34,7 +34,7 @@ function normalizeFounders(founders) {
 
 function normalizeStartPayload(body) {
   const extracted = body.extracted || {};
-  const triggerUrl = (body.trigger_url || extracted.yc_url || extracted.url || '').trim();
+  const triggerUrl = (body.trigger_url || extracted.yc_url || extracted.website || extracted.url || '').trim();
 
   if (!triggerUrl) {
     const error = new Error('trigger_url is required');
@@ -42,28 +42,38 @@ function normalizeStartPayload(body) {
     throw error;
   }
 
-  const name = (extracted.company_name || extracted.name || body.name || '').trim();
+  let domain = null;
+  try {
+    domain = new URL(triggerUrl).hostname.replace(/^www\./i, '');
+  } catch {
+    domain = null;
+  }
+
+  const name = (extracted.company_name || extracted.name || body.name || '').trim()
+    || (domain ? domain.split('.')[0].replace(/^\w/, (c) => c.toUpperCase()) : '');
+
   if (!name) {
     const error = new Error('company name is required (extracted.company_name)');
     error.status = 400;
     throw error;
   }
 
-  let domain = null;
-  try {
-    domain = new URL(triggerUrl).hostname;
-  } catch {
-    domain = null;
+  const triggerType = body.trigger_type || extracted.page_type || 'company_website';
+  const isYc = triggerType === 'yc_company_page' || /ycombinator\.com\/companies\//i.test(triggerUrl);
+
+  let website = extracted.website || null;
+  if (!website && !isYc) {
+    website = triggerUrl;
   }
 
   return {
     trigger_url: triggerUrl,
-    trigger_type: body.trigger_type || extracted.page_type || 'yc_company_page',
+    trigger_type: triggerType,
     name,
     yc_batch: extracted.batch || extracted.yc_batch || null,
-    yc_url: extracted.yc_url || triggerUrl,
-    website: extracted.website || null,
-    short_description: extracted.short_description || extracted.description || null,
+    yc_url: isYc ? (extracted.yc_url || triggerUrl) : (extracted.yc_url || null),
+    website,
+    short_description: extracted.short_description || extracted.description || extracted.og_description || null,
     industry: extracted.industry || null,
     location: extracted.location || null,
     team_size: extracted.team_size || null,
@@ -81,7 +91,14 @@ function normalizeStartPayload(body) {
 async function startResearch(userId, body, researchQueue) {
   const payload = normalizeStartPayload(body);
 
-  let company = await researchDb.findCompanyByYcUrl(userId, payload.yc_url);
+  let company = null;
+  if (payload.yc_url) {
+    company = await researchDb.findCompanyByYcUrl(userId, payload.yc_url);
+  }
+  if (!company && payload.website) {
+    company = await researchDb.findCompanyByWebsite(userId, payload.website);
+  }
+
   let item = null;
 
   if (!company) {
@@ -90,10 +107,10 @@ async function startResearch(userId, body, researchQueue) {
       title: payload.name,
       summary: payload.short_description,
       content: payload.raw_page_text,
-      source_type: 'yc-startup',
+      source_type: payload.yc_url ? 'yc-startup' : 'link',
       save_mode: 'manual_note',
-      note: payload.user_note || `YC research: ${payload.name}`,
-      tags: ['yc-research', 'startup-intel', ...payload.tags].join(','),
+      note: payload.user_note || `Startup research: ${payload.name}`,
+      tags: ['startup-intel', ...(payload.yc_url ? ['yc-research'] : []), ...payload.tags].join(','),
       domain: payload.domain,
       thumbnail: payload.og_image,
       processing: 'done',
@@ -140,11 +157,11 @@ async function startResearch(userId, body, researchQueue) {
   await researchDb.addSource(userId, {
     company_id: company.id,
     item_id: company.item_id || item?.id || null,
-    source_type: 'YC profile',
-    title: `${payload.name} — YC profile`,
+    source_type: payload.yc_url ? 'YC profile' : 'Company website',
+    title: `${payload.name} — ${payload.yc_url ? 'YC profile' : 'website'}`,
     url: payload.trigger_url,
     extracted_text: payload.raw_page_text,
-    credibility_score: 9,
+    credibility_score: payload.yc_url ? 9 : 7,
   });
 
   for (const founder of payload.founders) {
@@ -158,8 +175,8 @@ async function startResearch(userId, body, researchQueue) {
       await researchDb.addFounderSource(userId, {
         founder_id: created.id,
         company_id: company.id,
-        source_type: 'YC profile',
-        source_title: `${founder.full_name} links from YC`,
+        source_type: payload.yc_url ? 'YC profile' : 'Company website',
+        source_title: `${founder.full_name} links`,
         source_url: payload.trigger_url,
         raw_text: JSON.stringify({
           linkedin_url: founder.linkedin_url,
@@ -187,6 +204,7 @@ async function startResearch(userId, body, researchQueue) {
     linked_item_id: company.item_id || item?.id || null,
     status: job.status,
     founders_count: payload.founders.length,
+    analysis_model: 'accounts/fireworks/models/minimax-m3',
   };
 }
 

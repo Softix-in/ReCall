@@ -324,6 +324,22 @@ export function getResearchStats() {
   return request('/research/stats');
 }
 
+export function startDocCrawl(payload) {
+  return request('/knowledge/crawl', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getDocCrawlJob(id) {
+  return request(`/knowledge/jobs/${id}`);
+}
+
+export function listDocCrawlJobs({ limit = 20, offset = 0 } = {}) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  return request(`/knowledge/jobs?${params}`);
+}
+
 export function fetchProfile() {
   return request('/profile');
 }

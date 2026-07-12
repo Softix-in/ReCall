@@ -3,7 +3,12 @@ const embeddingService = require('../services/embedding-service');
 const { classifyUrl } = require('../pipeline/classify');
 const { fetchBySourceType } = require('../pipeline/fetch-content');
 const { fetchOgMetadata } = require('../pipeline/fetch-og');
+const { scrapeDocumentation, FirecrawlError } = require('../pipeline/fetch-firecrawl');
 const { summariseText, summariseManualNote } = require('../pipeline/summarise');
+const {
+  buildKnowledgeDocument,
+  shouldUseFirecrawl,
+} = require('../services/document-knowledge-service');
 const { logJob, logDaemon } = require('../utils/logger');
 const { getSettings } = require('../services/settings-service');
 const { uploadTranscript, uploadThumbnail } = require('../services/object-storage');
@@ -73,6 +78,67 @@ async function processAutoScrape(item) {
   };
 }
 
+async function processDocExtract(item) {
+  const metadata = parseCaptureMeta(item);
+  const rawStructure = metadata.raw_structure || null;
+  let extractor = metadata.extractor || 'client';
+  let markdown = null;
+  let title = item.title;
+  let thumbnail = item.thumbnail;
+
+  logJob(`[${item.id}] doc_extract started (extractor=${extractor})`);
+
+  if (shouldUseFirecrawl(rawStructure)) {
+    try {
+      const scraped = await scrapeDocumentation(item.url);
+      markdown = scraped.markdown;
+      title = title || scraped.title;
+      extractor = 'firecrawl';
+      logJob(`[${item.id}] Firecrawl scrape returned ${markdown.length} chars`);
+    } catch (error) {
+      if (error instanceof FirecrawlError && error.code === 'missing_firecrawl_key' && rawStructure) {
+        logJob(`[${item.id}] Firecrawl unavailable, using client DOM extraction`);
+        extractor = 'client';
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  const og = await fetchOgMetadata(item.url, item.id);
+  title = title || og.title || item.url;
+  thumbnail = thumbnail || og.thumbnail;
+
+  const knowledge = await buildKnowledgeDocument({
+    url: item.url,
+    title,
+    domain: item.domain,
+    extractor,
+    markdown,
+    rawStructure,
+    userId: item.user_id,
+    useLlm: true,
+  });
+
+  const captureMeta = {
+    ...metadata,
+    ...knowledge.capture_meta,
+    format: 'yaml',
+    extractor,
+  };
+
+  return {
+    source_type: 'documentation',
+    title,
+    summary: knowledge.summary,
+    content: knowledge.content,
+    thumbnail,
+    transcript: null,
+    capture_meta: JSON.stringify(captureMeta),
+    error_message: null,
+  };
+}
+
 async function persistLargeFiles(userId, itemId, result) {
   const next = { ...result };
 
@@ -128,9 +194,15 @@ async function processItem(itemId) {
   logJob(`[${itemId}] processing started (${item.save_mode})`);
 
   try {
-    const result = item.save_mode === 'manual_note'
-      ? await processManualNote(item)
-      : await processAutoScrape(item);
+    let result;
+
+    if (item.save_mode === 'manual_note') {
+      result = await processManualNote(item);
+    } else if (item.save_mode === 'doc_extract') {
+      result = await processDocExtract(item);
+    } else {
+      result = await processAutoScrape(item);
+    }
 
     const settings = await getSettings(userId);
 
@@ -171,4 +243,5 @@ async function processItem(itemId) {
 
 module.exports = {
   processItem,
+  processDocExtract,
 };

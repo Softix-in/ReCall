@@ -40,6 +40,22 @@ function isPdfUrl(url) {
   }
 }
 
+function isDocumentationUrl(url) {
+  try {
+    const u = new URL(url);
+    const hostname = u.hostname.replace(/^www\./i, '').toLowerCase();
+    const path = u.pathname.toLowerCase();
+
+    if (hostname.startsWith('docs.') || hostname.includes('.docs.')) {
+      return true;
+    }
+
+    return /\/(docs|documentation|reference|api|guide|learn)(\/|$)/i.test(path);
+  } catch {
+    return false;
+  }
+}
+
 function isYcCompanyUrl(url) {
   try {
     const u = new URL(url);
@@ -55,6 +71,10 @@ function classifyUrl(url, metadata = {}) {
 
   if (isYcCompanyUrl(url) || metadata.research === true || metadata.trigger_type === 'yc_company_page') {
     return 'yc-startup';
+  }
+
+  if (metadata.save_mode === 'doc_extract' || isDocumentationUrl(url)) {
+    return 'documentation';
   }
 
   const hostname = parseHostname(url);
@@ -98,4 +118,5 @@ module.exports = {
   classifyUrl,
   parseHostname,
   isYcCompanyUrl,
+  isDocumentationUrl,
 };

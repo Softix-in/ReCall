@@ -77,4 +77,9 @@ module.exports = {
   SMTP_PASS: process.env.SMTP_PASS || '',
   SMTP_FROM: process.env.SMTP_FROM || '',
   EMAIL_DEV_LOG: process.env.EMAIL_DEV_LOG === 'true',
+  FIRECRAWL_API_KEY: process.env.FIRECRAWL_API_KEY || '',
+  FIRECRAWL_MAX_CRAWL_PAGES: Number(process.env.FIRECRAWL_MAX_CRAWL_PAGES) || 25,
+  RESEARCH_MAX_CRAWL_PAGES: Number(process.env.RESEARCH_MAX_CRAWL_PAGES) || 12,
+  RESEARCH_MAX_SEARCH_RESULTS: Number(process.env.RESEARCH_MAX_SEARCH_RESULTS) || 5,
+  DOC_EXTRACT_MIN_CLIENT_CHARS: Number(process.env.DOC_EXTRACT_MIN_CLIENT_CHARS) || 800,
 };

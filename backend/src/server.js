@@ -22,6 +22,10 @@ const { ResearchQueue } = require('./queue/research-queue');
 const { processResearchJob } = require('./workers/startup-research-worker');
 const { createResearchRouter } = require('./routes/research');
 const researchDb = require('./db/research');
+const { DocCrawlQueue } = require('./queue/doc-crawl-queue');
+const { processDocCrawlJob } = require('./workers/doc-crawl-worker');
+const { createKnowledgeRouter } = require('./routes/knowledge');
+const docCrawlDb = require('./db/doc-crawl');
 const { startBackupScheduler, stopBackupScheduler } = require('./services/backup-service');
 const { logDaemon } = require('./utils/logger');
 const { startEmbedService, stopEmbedService } = require('./services/embed-launcher');
@@ -33,6 +37,7 @@ const { createEmailVerifiedMiddleware } = require('./middleware/email-verified')
 let queue;
 let projectEmbedQueue;
 let researchQueue;
+let docCrawlQueue;
 let server;
 
 async function resumeStuckJobs(activeQueue) {
@@ -53,6 +58,31 @@ async function resumeStuckJobs(activeQueue) {
       activeQueue.addJob({ itemId: item.id, url: item.url });
     } catch (error) {
       logDaemon('error', `Failed to resume item ${item.id}`, error);
+    }
+  }
+}
+
+async function resumeStuckDocCrawlJobs(activeQueue) {
+  const stuck = await docCrawlDb.listStuckJobs();
+
+  if (stuck.length === 0) {
+    return;
+  }
+
+  logDaemon('info', `Resuming ${stuck.length} doc crawl job(s) from previous session`);
+
+  for (const job of stuck) {
+    if (job.status === 'running') {
+      await docCrawlDb.updateJob(job.user_id, job.id, { status: 'queued' });
+    }
+
+    try {
+      activeQueue.addJob({
+        jobId: job.id,
+        userId: job.user_id,
+      });
+    } catch (error) {
+      logDaemon('error', `Failed to resume doc crawl job ${job.id}`, error);
     }
   }
 }
@@ -157,8 +187,24 @@ async function bootstrap() {
     },
   });
 
+  docCrawlQueue = new DocCrawlQueue(processDocCrawlJob, {
+    onPermanentFailure: async (jobId, error) => {
+      const job = await docCrawlDb.getJobInternal(jobId);
+      if (!job) return;
+
+      await docCrawlDb.updateJob(job.user_id, jobId, {
+        status: 'failed',
+        error_message: error.message,
+        completed_at: Date.now(),
+      });
+
+      logDaemon('error', `Doc crawl job ${jobId} failed permanently: ${error.message}`, error);
+    },
+  });
+
   await resumeStuckJobs(queue);
   await resumeStuckResearchJobs(researchQueue);
+  await resumeStuckDocCrawlJobs(docCrawlQueue);
   startBackupScheduler();
 
   const app = express();
@@ -218,6 +264,7 @@ async function bootstrap() {
   app.use(createProfileRouter(projectEmbedQueue));
   app.use(createCareerRouter({ projectEmbedQueue }));
   app.use(createResearchRouter(researchQueue));
+  app.use(createKnowledgeRouter(docCrawlQueue));
 
   app.use((req, res) => {
     res.status(404).json({ error: 'Not found', path: req.path });
@@ -227,7 +274,7 @@ async function bootstrap() {
     console.log(`Recall backend listening on http://${config.HOST}:${config.PORT}`);
   });
 
-  return { app, server, queue, projectEmbedQueue, researchQueue };
+  return { app, server, queue, projectEmbedQueue, researchQueue, docCrawlQueue };
 }
 
 async function shutdown(signal) {
@@ -262,6 +309,15 @@ async function shutdown(signal) {
       await researchQueue.drain();
     } catch (error) {
       console.error(`Error while draining research queue: ${error.message}`);
+    }
+  }
+
+  if (docCrawlQueue) {
+    console.log('Draining doc crawl queue...');
+    try {
+      await docCrawlQueue.drain();
+    } catch (error) {
+      console.error(`Error while draining doc crawl queue: ${error.message}`);
     }
   }
 

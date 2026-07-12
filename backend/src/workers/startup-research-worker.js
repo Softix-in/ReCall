@@ -1,10 +1,113 @@
 const cheerio = require('cheerio');
+const config = require('../config');
 const researchDb = require('../db/research');
 const { fetchHtml, fetchOgMetadata } = require('../pipeline/fetch-og');
 const { fetchArticleText } = require('../pipeline/fetch-article');
-const { completeStructured, LlmError } = require('../services/llm-client');
+const {
+  hasFirecrawlKey,
+  scrapeDocumentation,
+  researchSitePages,
+  searchWeb,
+  FirecrawlError,
+} = require('../pipeline/fetch-firecrawl');
+const { completeStructured, LlmError, RESEARCH_ANALYSIS_MODEL } = require('../services/llm-client');
 const embedClient = require('../services/embed-client');
 const { logJob } = require('../utils/logger');
+
+const YC_METADATA_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    name: { type: 'string' },
+    yc_batch: { type: 'string' },
+    yc_status: { type: 'string' },
+    short_description: { type: 'string' },
+    industry: { type: 'string' },
+    location: { type: 'string' },
+    team_size: { type: 'string' },
+    founded_year: { type: ['integer', 'null'] },
+    website: { type: 'string' },
+    tags: { type: 'array', items: { type: 'string' } },
+    founders: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          full_name: { type: 'string' },
+          role: { type: 'string' },
+          linkedin_url: { type: 'string' },
+          twitter_url: { type: 'string' },
+          github_url: { type: 'string' },
+          personal_website: { type: 'string' },
+        },
+        required: ['full_name', 'role', 'linkedin_url', 'twitter_url', 'github_url', 'personal_website'],
+      },
+    },
+  },
+  required: [
+    'name', 'yc_batch', 'yc_status', 'short_description', 'industry', 'location',
+    'team_size', 'founded_year', 'website', 'tags', 'founders',
+  ],
+};
+
+const FOUNDER_PROFILE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    education: { type: 'string' },
+    previous_companies: { type: 'string' },
+    previous_startups: { type: 'string' },
+    technical_background: { type: 'string' },
+    domain_expertise: { type: 'string' },
+    achievements: { type: 'string' },
+    public_bio: { type: 'string' },
+    location: { type: 'string' },
+    linkedin_url: { type: 'string' },
+    twitter_url: { type: 'string' },
+    github_url: { type: 'string' },
+    personal_website: { type: 'string' },
+  },
+  required: [
+    'education', 'previous_companies', 'previous_startups', 'technical_background',
+    'domain_expertise', 'achievements', 'public_bio', 'location',
+    'linkedin_url', 'twitter_url', 'github_url', 'personal_website',
+  ],
+};
+
+const FUNDING_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    revenue_notes: { type: 'string' },
+    funding_summary: { type: 'string' },
+    rounds: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          round_name: { type: 'string' },
+          amount: { type: 'string' },
+          currency: { type: 'string' },
+          announced_date: { type: 'string' },
+          investors: { type: 'string' },
+          valuation: { type: 'string' },
+          source_url: { type: 'string' },
+          source_title: { type: 'string' },
+          evidence_quote: { type: 'string' },
+          confidence: { type: 'integer' },
+          notes: { type: 'string' },
+        },
+        required: [
+          'round_name', 'amount', 'currency', 'announced_date', 'investors',
+          'valuation', 'source_url', 'source_title', 'evidence_quote', 'confidence', 'notes',
+        ],
+      },
+    },
+  },
+  required: ['revenue_notes', 'funding_summary', 'rounds'],
+};
 
 const ANALYSIS_SCHEMA = {
   type: 'object',
@@ -25,6 +128,8 @@ const ANALYSIS_SCHEMA = {
     risks: { type: 'string' },
     insight_summary: { type: 'string' },
     adjacent_opportunities: { type: 'string' },
+    revenue_notes: { type: 'string' },
+    funding_notes: { type: 'string' },
     market_demand_score: { type: 'integer' },
     problem_pain_score: { type: 'integer' },
     technical_depth_score: { type: 'integer' },
@@ -69,6 +174,8 @@ const ANALYSIS_SCHEMA = {
     'risks',
     'insight_summary',
     'adjacent_opportunities',
+    'revenue_notes',
+    'funding_notes',
     'market_demand_score',
     'problem_pain_score',
     'technical_depth_score',
@@ -94,12 +201,21 @@ function truncate(text, max = 12_000) {
   return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
 }
 
-function absolutize(baseUrl, href) {
-  try {
-    return new URL(href, baseUrl).toString();
-  } catch {
-    return null;
+function emptyToNull(value) {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (!s || /^unknown|n\/a|none|not (found|available)|null$/i.test(s)) return null;
+  return s;
+}
+
+function normalizeWebsite(url) {
+  if (!url) return null;
+  let websiteUrl = String(url).trim();
+  if (!websiteUrl) return null;
+  if (!/^https?:\/\//i.test(websiteUrl)) {
+    websiteUrl = `https://${websiteUrl}`;
   }
+  return websiteUrl;
 }
 
 function classifyPageType(url) {
@@ -111,6 +227,7 @@ function classifyPageType(url) {
     }
   })();
 
+  if (/ycombinator\.com\/companies\//i.test(url)) return 'yc_profile';
   if (/pricing|plans/.test(path)) return 'pricing';
   if (/about|team|company/.test(path)) return 'about';
   if (/blog|news|changelog/.test(path)) return 'blog';
@@ -118,19 +235,46 @@ function classifyPageType(url) {
   if (/docs|documentation/.test(path)) return 'docs';
   if (/customers|case-stud/.test(path)) return 'customers';
   if (/security|trust/.test(path)) return 'security';
-  return 'homepage';
+  if (!path || path === '/') return 'homepage';
+  return 'page';
 }
 
-async function crawlCompanyWebsite(userId, company) {
-  if (!company.website) {
-    return { pages: [], textBundle: '' };
-  }
+function isLoginWalled(url) {
+  return /linkedin\.com|twitter\.com|x\.com/i.test(url || '');
+}
 
-  let websiteUrl = company.website.trim();
-  if (!/^https?:\/\//i.test(websiteUrl)) {
-    websiteUrl = `https://${websiteUrl}`;
+function absolutize(baseUrl, href) {
+  try {
+    return new URL(href, baseUrl).toString();
+  } catch {
+    return null;
   }
+}
 
+async function setProgress(userId, jobId, progress) {
+  await researchDb.updateJob(userId, jobId, { progress });
+}
+
+async function persistPage(userId, companyId, page) {
+  const pageType = page.page_type || classifyPageType(page.url);
+  const text = page.markdown || page.raw_text || '';
+  await researchDb.addCompanyPage(userId, {
+    company_id: companyId,
+    page_type: pageType,
+    title: page.title || page.url,
+    url: page.url,
+    raw_text: text.slice(0, 40_000),
+    summary: (page.description || text).slice(0, 400),
+  });
+  return {
+    url: page.url,
+    title: page.title || page.url,
+    page_type: pageType,
+    text,
+  };
+}
+
+async function shallowCrawlWebsite(userId, company, websiteUrl) {
   const pages = [];
   const texts = [];
 
@@ -140,16 +284,13 @@ async function crawlCompanyWebsite(userId, company) {
     const title = $('title').first().text().trim() || company.name;
     const bodyText = $('body').text().replace(/\s+/g, ' ').trim().slice(0, 20_000);
 
-    await researchDb.addCompanyPage(userId, {
-      company_id: company.id,
-      page_type: 'homepage',
-      title,
+    const saved = await persistPage(userId, company.id, {
       url: websiteUrl,
+      title,
+      page_type: 'homepage',
       raw_text: bodyText,
-      summary: bodyText.slice(0, 400),
     });
-
-    pages.push({ url: websiteUrl, title, page_type: 'homepage' });
+    pages.push(saved);
     texts.push(`Homepage (${websiteUrl}):\n${bodyText.slice(0, 4000)}`);
 
     const candidateHrefs = new Set();
@@ -157,12 +298,11 @@ async function crawlCompanyWebsite(userId, company) {
       const href = $(el).attr('href');
       const abs = absolutize(websiteUrl, href);
       if (!abs) return;
-
       try {
         const u = new URL(abs);
         const base = new URL(websiteUrl);
         if (u.hostname !== base.hostname) return;
-        if (/pricing|about|blog|news|careers|customers|docs|security|product/i.test(u.pathname)) {
+        if (/pricing|about|blog|news|careers|customers|docs|security|product|team/i.test(u.pathname)) {
           candidateHrefs.add(`${u.origin}${u.pathname}`);
         }
       } catch {
@@ -170,13 +310,10 @@ async function crawlCompanyWebsite(userId, company) {
       }
     });
 
-    const extras = [...candidateHrefs].slice(0, 4);
-
-    for (const pageUrl of extras) {
+    for (const pageUrl of [...candidateHrefs].slice(0, 4)) {
       try {
         let pageText = '';
         let pageTitle = pageUrl;
-
         try {
           const article = await fetchArticleText(pageUrl);
           pageText = article.text || '';
@@ -186,145 +323,517 @@ async function crawlCompanyWebsite(userId, company) {
           pageText = og.text || '';
           pageTitle = og.title || pageUrl;
         }
-
         if (!pageText.trim()) continue;
-
-        const pageType = classifyPageType(pageUrl);
-        await researchDb.addCompanyPage(userId, {
-          company_id: company.id,
-          page_type: pageType,
-          title: pageTitle,
+        const savedPage = await persistPage(userId, company.id, {
           url: pageUrl,
-          raw_text: pageText.slice(0, 20_000),
-          summary: pageText.slice(0, 400),
+          title: pageTitle,
+          page_type: classifyPageType(pageUrl),
+          raw_text: pageText,
         });
-
-        pages.push({ url: pageUrl, title: pageTitle, page_type: pageType });
-        texts.push(`${pageType} (${pageUrl}):\n${pageText.slice(0, 2500)}`);
+        pages.push(savedPage);
+        texts.push(`${savedPage.page_type} (${pageUrl}):\n${pageText.slice(0, 2500)}`);
       } catch (error) {
-        logJob(`[research ${company.id}] page crawl failed ${pageUrl}: ${error.message}`);
+        logJob(`[research ${company.id}] shallow page fail ${pageUrl}: ${error.message}`);
       }
     }
   } catch (error) {
-    logJob(`[research ${company.id}] website crawl failed: ${error.message}`);
+    logJob(`[research ${company.id}] shallow crawl failed: ${error.message}`);
+  }
+
+  return { pages, textBundle: texts.join('\n\n---\n\n'), engine: 'shallow' };
+}
+
+async function crawlWithFirecrawl(userId, company) {
+  const pages = [];
+  const texts = [];
+  const limit = config.RESEARCH_MAX_CRAWL_PAGES || 12;
+
+  if (company.yc_url) {
+    try {
+      const yc = await scrapeDocumentation(company.yc_url);
+      const saved = await persistPage(userId, company.id, {
+        ...yc,
+        page_type: 'yc_profile',
+      });
+      pages.push(saved);
+      texts.push(`YC profile (${company.yc_url}):\n${truncate(yc.markdown, 8000)}`);
+    } catch (error) {
+      logJob(`[research ${company.id}] YC Firecrawl scrape failed: ${error.message}`);
+    }
+  }
+
+  const websiteUrl = normalizeWebsite(company.website);
+  if (websiteUrl) {
+    try {
+      const sitePages = await researchSitePages(websiteUrl, { limit });
+      for (const page of sitePages) {
+        const saved = await persistPage(userId, company.id, page);
+        pages.push(saved);
+        texts.push(`${saved.page_type} (${page.url}):\n${truncate(page.markdown, 3500)}`);
+      }
+    } catch (error) {
+      logJob(`[research ${company.id}] Firecrawl site crawl failed: ${error.message}`);
+      const fallback = await shallowCrawlWebsite(userId, company, websiteUrl);
+      return {
+        pages: [...pages, ...fallback.pages],
+        textBundle: [...texts, fallback.textBundle].filter(Boolean).join('\n\n---\n\n'),
+        engine: 'firecrawl+shallow',
+      };
+    }
   }
 
   return {
     pages,
     textBundle: texts.join('\n\n---\n\n'),
+    engine: 'firecrawl',
   };
 }
 
-async function enrichFounderSources(userId, company, founders) {
-  let enriched = 0;
-
-  for (const founder of founders) {
-    const urls = [
-      { type: 'LinkedIn', url: founder.linkedin_url },
-      { type: 'GitHub', url: founder.github_url },
-      { type: 'Personal website', url: founder.personal_website },
-      { type: 'Twitter', url: founder.twitter_url },
-    ].filter((entry) => entry.url);
-
-    for (const entry of urls) {
-      try {
-        // LinkedIn/Twitter often block bots — still record the URL as evidence.
-        if (/linkedin\.com|twitter\.com|x\.com/i.test(entry.url)) {
-          await researchDb.addFounderSource(userId, {
-            founder_id: founder.id,
-            company_id: company.id,
-            source_type: entry.type,
-            source_title: `${founder.full_name} — ${entry.type}`,
-            source_url: entry.url,
-            raw_text: null,
-            extracted_summary: `Public ${entry.type} profile URL captured (content not scraped — login wall).`,
-            credibility_score: 6,
-          });
-          enriched += 1;
-          continue;
-        }
-
-        const og = await fetchOgMetadata(entry.url);
-        await researchDb.addFounderSource(userId, {
-          founder_id: founder.id,
-          company_id: company.id,
-          source_type: entry.type,
-          source_title: og.title || `${founder.full_name} — ${entry.type}`,
-          source_url: entry.url,
-          raw_text: og.text || null,
-          extracted_summary: og.description || og.text?.slice(0, 300) || null,
-          credibility_score: 7,
-        });
-        enriched += 1;
-      } catch (error) {
-        logJob(`[research ${company.id}] founder source ${entry.url}: ${error.message}`);
+async function crawlCompanySources(userId, company) {
+  if (hasFirecrawlKey()) {
+    try {
+      return await crawlWithFirecrawl(userId, company);
+    } catch (error) {
+      if (error instanceof FirecrawlError && error.code === 'missing_firecrawl_key') {
+        // fall through
+      } else {
+        logJob(`[research ${company.id}] Firecrawl unavailable, shallow fallback: ${error.message}`);
       }
     }
   }
 
-  return enriched;
-}
-
-async function discoverNewsSignals(userId, company, analysis) {
-  const signals = Array.isArray(analysis.news_signals) ? analysis.news_signals : [];
-  let created = 0;
-
-  for (const signal of signals.slice(0, 8)) {
-    if (!signal?.title) continue;
-
-    await researchDb.addNews(userId, {
-      company_id: company.id,
-      title: signal.title,
-      url: null,
-      publisher: 'AI-extracted signal',
-      news_type: signal.news_type || 'Market analysis',
-      summary: signal.summary,
-      key_signal: signal.key_signal || null,
-      importance_score: clampScore(signal.importance_score),
-      raw_text: signal.summary,
-    });
-    created += 1;
+  const websiteUrl = normalizeWebsite(company.website);
+  if (!websiteUrl && !company.yc_url) {
+    return { pages: [], textBundle: '', engine: 'none' };
   }
 
-  // Also store a synthetic "YC listing" news row as a baseline signal.
-  if (company.yc_url) {
-    await researchDb.addNews(userId, {
-      company_id: company.id,
-      title: `${company.name} listed on YC directory`,
-      url: company.yc_url,
-      publisher: 'Y Combinator',
-      news_type: 'YC announcement',
-      summary: company.short_description || analysis.one_line_understanding || null,
-      key_signal: company.yc_batch ? `Part of ${company.yc_batch}` : 'YC company',
-      importance_score: 7,
-    });
-    created += 1;
+  if (company.yc_url && !websiteUrl) {
+    // Try article fetch for YC only
+    try {
+      const article = await fetchArticleText(company.yc_url);
+      const saved = await persistPage(userId, company.id, {
+        url: company.yc_url,
+        title: article.title || company.name,
+        page_type: 'yc_profile',
+        raw_text: article.text || '',
+      });
+      return {
+        pages: [saved],
+        textBundle: `YC profile (${company.yc_url}):\n${truncate(article.text, 8000)}`,
+        engine: 'shallow',
+      };
+    } catch (error) {
+      logJob(`[research ${company.id}] YC shallow fetch failed: ${error.message}`);
+      return { pages: [], textBundle: company.raw_page_text || '', engine: 'none' };
+    }
   }
 
-  return created;
+  return shallowCrawlWebsite(userId, company, websiteUrl);
 }
 
-function buildAnalysisPrompt(company, founders, websiteText) {
+async function extractYcMetadata(userId, company, crawlText) {
+  const sourceText = [
+    company.raw_page_text,
+    crawlText,
+  ].filter(Boolean).join('\n\n');
+
+  if (!sourceText.trim()) {
+    return { skipped: true, meta: null };
+  }
+
+  try {
+    const meta = await completeStructured({
+      userId,
+      model: RESEARCH_ANALYSIS_MODEL,
+      schemaName: 'startup_yc_metadata',
+      schema: YC_METADATA_SCHEMA,
+      temperature: 0.1,
+      prompt: `Extract structured YC / company metadata from the source text.
+Only use facts present in the text. Use empty string for unknown strings, null for founded_year if unknown.
+yc_status examples: Active, Acquired, Public, Inactive — only if stated.
+Do not invent LinkedIn/Twitter URLs; leave empty string if not present.
+
+Known seed values:
+Name: ${company.name}
+Batch: ${company.yc_batch || ''}
+Website: ${company.website || ''}
+YC URL: ${company.yc_url || ''}
+
+Source text:
+${truncate(sourceText, 14_000)}`,
+    });
+
+    const patch = {};
+    if (emptyToNull(meta.name) && meta.name !== company.name) patch.name = meta.name.trim();
+    if (emptyToNull(meta.yc_batch)) patch.yc_batch = meta.yc_batch.trim();
+    if (emptyToNull(meta.yc_status)) patch.yc_status = meta.yc_status.trim();
+    if (emptyToNull(meta.short_description)) patch.short_description = meta.short_description.trim();
+    if (emptyToNull(meta.industry)) patch.industry = meta.industry.trim();
+    if (emptyToNull(meta.location)) patch.location = meta.location.trim();
+    if (emptyToNull(meta.team_size)) patch.team_size = meta.team_size.trim();
+    if (Number.isFinite(meta.founded_year)) patch.founded_year = meta.founded_year;
+    if (emptyToNull(meta.website) && !company.website) {
+      patch.website = normalizeWebsite(meta.website);
+    }
+    if (Array.isArray(meta.tags) && meta.tags.length) {
+      patch.tags = [...new Set([...(company.tags || []), ...meta.tags.map(String)])].slice(0, 25);
+    }
+
+    if (Object.keys(patch).length) {
+      await researchDb.updateCompany(userId, company.id, patch);
+    }
+
+    return { skipped: false, meta };
+  } catch (error) {
+    if (error instanceof LlmError && error.code === 'missing_api_key') {
+      return { skipped: true, meta: null, missingKey: true };
+    }
+    logJob(`[research ${company.id}] YC metadata extract failed: ${error.message}`);
+    return { skipped: true, meta: null, error: error.message };
+  }
+}
+
+async function upsertFoundersFromMeta(userId, company, metaFounders = []) {
+  const existing = await researchDb.listFoundersForCompany(userId, company.id);
+  const byName = new Map(existing.map((f) => [f.full_name.toLowerCase(), f]));
+
+  for (const entry of metaFounders.slice(0, 10)) {
+    const fullName = emptyToNull(entry.full_name);
+    if (!fullName) continue;
+
+    const key = fullName.toLowerCase();
+    let founder = byName.get(key);
+
+    if (!founder) {
+      founder = await researchDb.createFounder(userId, {
+        full_name: fullName,
+        current_role: emptyToNull(entry.role),
+        linkedin_url: emptyToNull(entry.linkedin_url),
+        twitter_url: emptyToNull(entry.twitter_url),
+        github_url: emptyToNull(entry.github_url),
+        personal_website: emptyToNull(entry.personal_website),
+      });
+      await researchDb.linkFounderToCompany(userId, company.id, founder.id, {
+        role: emptyToNull(entry.role),
+        source_url: company.yc_url || company.website || company.source_url,
+      });
+      byName.set(key, founder);
+    } else {
+      const patch = {};
+      if (emptyToNull(entry.role) && !founder.current_role) patch.current_role = entry.role.trim();
+      if (emptyToNull(entry.linkedin_url) && !founder.linkedin_url) patch.linkedin_url = entry.linkedin_url.trim();
+      if (emptyToNull(entry.twitter_url) && !founder.twitter_url) patch.twitter_url = entry.twitter_url.trim();
+      if (emptyToNull(entry.github_url) && !founder.github_url) patch.github_url = entry.github_url.trim();
+      if (emptyToNull(entry.personal_website) && !founder.personal_website) {
+        patch.personal_website = entry.personal_website.trim();
+      }
+      if (Object.keys(patch).length) {
+        founder = await researchDb.updateFounder(userId, founder.id, patch);
+        byName.set(key, founder);
+      }
+    }
+  }
+
+  return researchDb.listFoundersForCompany(userId, company.id);
+}
+
+async function gatherFounderEvidence(userId, company, founder) {
+  const chunks = [];
+  const urls = [
+    { type: 'Personal website', url: founder.personal_website },
+    { type: 'GitHub', url: founder.github_url },
+    { type: 'LinkedIn', url: founder.linkedin_url },
+    { type: 'Twitter', url: founder.twitter_url },
+  ].filter((e) => e.url);
+
+  for (const entry of urls) {
+    if (isLoginWalled(entry.url)) {
+      await researchDb.addFounderSource(userId, {
+        founder_id: founder.id,
+        company_id: company.id,
+        source_type: entry.type,
+        source_title: `${founder.full_name} — ${entry.type}`,
+        source_url: entry.url,
+        raw_text: null,
+        extracted_summary: `Public ${entry.type} profile URL captured (content not scraped — login wall).`,
+        credibility_score: 6,
+      });
+      continue;
+    }
+
+    try {
+      let title = entry.url;
+      let text = '';
+      let summary = null;
+
+      if (hasFirecrawlKey()) {
+        try {
+          const doc = await scrapeDocumentation(entry.url, { waitFor: 1500 });
+          title = doc.title || title;
+          text = doc.markdown || '';
+          summary = doc.description || text.slice(0, 300);
+        } catch {
+          const og = await fetchOgMetadata(entry.url);
+          title = og.title || title;
+          text = og.text || '';
+          summary = og.description || text.slice(0, 300);
+        }
+      } else {
+        const og = await fetchOgMetadata(entry.url);
+        title = og.title || title;
+        text = og.text || '';
+        summary = og.description || text.slice(0, 300);
+      }
+
+      await researchDb.addFounderSource(userId, {
+        founder_id: founder.id,
+        company_id: company.id,
+        source_type: entry.type,
+        source_title: title,
+        source_url: entry.url,
+        raw_text: text ? text.slice(0, 12_000) : null,
+        extracted_summary: summary,
+        credibility_score: 7,
+      });
+
+      if (text) {
+        chunks.push(`${entry.type} (${entry.url}):\n${truncate(text, 2500)}`);
+      }
+    } catch (error) {
+      logJob(`[research ${company.id}] founder source ${entry.url}: ${error.message}`);
+    }
+  }
+
+  if (hasFirecrawlKey()) {
+    try {
+      const query = `"${founder.full_name}" ${company.name} founder OR co-founder`;
+      const { hits } = await searchWeb(query, {
+        limit: Math.min(config.RESEARCH_MAX_SEARCH_RESULTS || 5, 4),
+        scrape: true,
+      });
+
+      for (const hit of hits.slice(0, 3)) {
+        if (isLoginWalled(hit.url)) continue;
+        const text = hit.markdown || hit.description || '';
+        await researchDb.addFounderSource(userId, {
+          founder_id: founder.id,
+          company_id: company.id,
+          source_type: 'web_search',
+          source_title: hit.title || hit.url,
+          source_url: hit.url,
+          raw_text: text ? text.slice(0, 8000) : null,
+          extracted_summary: (hit.description || text).slice(0, 300) || null,
+          credibility_score: 5,
+        });
+        if (text) {
+          chunks.push(`Search hit (${hit.url}):\n${truncate(text, 2000)}`);
+        }
+      }
+    } catch (error) {
+      logJob(`[research ${company.id}] founder search failed: ${error.message}`);
+    }
+  }
+
+  return chunks.join('\n\n---\n\n');
+}
+
+async function enrichFoundersDeep(userId, company, founders) {
+  let enriched = 0;
+
+  for (const founder of founders) {
+    const evidence = await gatherFounderEvidence(userId, company, founder);
+    if (!evidence.trim()) {
+      enriched += 1;
+      continue;
+    }
+
+    try {
+      const profile = await completeStructured({
+        userId,
+        model: RESEARCH_ANALYSIS_MODEL,
+        schemaName: 'startup_founder_profile',
+        schema: FOUNDER_PROFILE_SCHEMA,
+        temperature: 0.1,
+        prompt: `Extract a founder profile from the evidence below.
+Only use facts supported by the evidence. Use empty string when unknown.
+Do NOT invent LinkedIn/Twitter/GitHub URLs — only fill if explicitly present.
+Prefer concise factual phrases over marketing language.
+
+Founder: ${founder.full_name}
+Company: ${company.name}
+Role: ${founder.company_role || founder.current_role || ''}
+
+Evidence:
+${truncate(evidence, 12_000)}`,
+      });
+
+      const patch = {};
+      for (const key of [
+        'education', 'previous_companies', 'previous_startups', 'technical_background',
+        'domain_expertise', 'achievements', 'public_bio', 'location',
+        'linkedin_url', 'twitter_url', 'github_url', 'personal_website',
+      ]) {
+        const value = emptyToNull(profile[key]);
+        if (value && !founder[key]) patch[key] = value;
+      }
+
+      if (Object.keys(patch).length) {
+        await researchDb.updateFounder(userId, founder.id, patch);
+      }
+      enriched += 1;
+    } catch (error) {
+      if (error instanceof LlmError && error.code === 'missing_api_key') {
+        return { enriched, missingKey: true };
+      }
+      logJob(`[research ${company.id}] founder LLM enrich failed: ${error.message}`);
+      enriched += 1;
+    }
+  }
+
+  return { enriched, missingKey: false };
+}
+
+async function researchFunding(userId, company, crawlText) {
+  const evidenceChunks = [];
+
+  if (hasFirecrawlKey()) {
+    const queries = [
+      `"${company.name}" funding OR raised OR seed OR Series`,
+      company.website ? `"${company.name}" revenue OR ARR` : null,
+    ].filter(Boolean);
+
+    for (const query of queries) {
+      try {
+        const { hits } = await searchWeb(query, {
+          limit: config.RESEARCH_MAX_SEARCH_RESULTS || 5,
+          scrape: true,
+          sources: ['web', 'news'],
+        });
+
+        for (const hit of hits.slice(0, 4)) {
+          const text = hit.markdown || hit.description || '';
+          await researchDb.addSource(userId, {
+            company_id: company.id,
+            source_type: 'funding_search',
+            title: hit.title || hit.url,
+            url: hit.url,
+            extracted_text: text ? text.slice(0, 10_000) : null,
+            credibility_score: 6,
+          });
+          if (text) {
+            evidenceChunks.push(`${hit.title || 'Result'} (${hit.url}):\n${truncate(text, 2500)}`);
+          }
+        }
+      } catch (error) {
+        logJob(`[research ${company.id}] funding search failed: ${error.message}`);
+      }
+    }
+  }
+
+  evidenceChunks.push(`Company crawl context:\n${truncate(crawlText, 4000)}`);
+  if (company.raw_page_text) {
+    evidenceChunks.push(`Seed page:\n${truncate(company.raw_page_text, 3000)}`);
+  }
+
+  try {
+    const extracted = await completeStructured({
+      userId,
+      model: RESEARCH_ANALYSIS_MODEL,
+      schemaName: 'startup_funding_extract',
+      schema: FUNDING_SCHEMA,
+      temperature: 0.1,
+      prompt: `Extract funding and revenue facts for ${company.name}.
+CRITICAL RULES:
+- Do NOT invent funding amounts, investors, valuations, or revenue figures.
+- Only include a round when the evidence explicitly supports it.
+- Every round MUST include source_url from the evidence and an evidence_quote copied/paraphrased tightly from that source.
+- If nothing is evidenced, return empty rounds and say so in funding_summary / revenue_notes.
+- confidence is 1-10 based on source quality (press release / Crunchbase / company blog higher).
+
+Evidence:
+${truncate(evidenceChunks.join('\n\n---\n\n'), 14_000)}`,
+    });
+
+    await researchDb.clearFundingForCompany(userId, company.id);
+
+    let roundsSaved = 0;
+    for (const round of (extracted.rounds || []).slice(0, 12)) {
+      if (!emptyToNull(round.round_name) && !emptyToNull(round.amount)) continue;
+      if (!emptyToNull(round.source_url) || !emptyToNull(round.evidence_quote)) continue;
+
+      await researchDb.addFunding(userId, {
+        company_id: company.id,
+        round_name: emptyToNull(round.round_name),
+        amount: emptyToNull(round.amount),
+        currency: emptyToNull(round.currency),
+        announced_date: emptyToNull(round.announced_date),
+        investors: emptyToNull(round.investors),
+        valuation: emptyToNull(round.valuation),
+        source_url: emptyToNull(round.source_url),
+        source_title: emptyToNull(round.source_title),
+        evidence_quote: emptyToNull(round.evidence_quote),
+        confidence: clampScore(round.confidence),
+        notes: emptyToNull(round.notes),
+      });
+      roundsSaved += 1;
+    }
+
+    const companyPatch = {};
+    if (emptyToNull(extracted.revenue_notes)) companyPatch.revenue_notes = extracted.revenue_notes.trim();
+    if (emptyToNull(extracted.funding_summary)) companyPatch.funding_summary = extracted.funding_summary.trim();
+    if (Object.keys(companyPatch).length) {
+      await researchDb.updateCompany(userId, company.id, companyPatch);
+    }
+
+    return {
+      skipped: false,
+      roundsSaved,
+      revenue_notes: emptyToNull(extracted.revenue_notes),
+      funding_summary: emptyToNull(extracted.funding_summary),
+    };
+  } catch (error) {
+    if (error instanceof LlmError && error.code === 'missing_api_key') {
+      return { skipped: true, missingKey: true, roundsSaved: 0 };
+    }
+    logJob(`[research ${company.id}] funding extract failed: ${error.message}`);
+    return { skipped: true, roundsSaved: 0, error: error.message };
+  }
+}
+
+function buildAnalysisPrompt(company, founders, websiteText, funding) {
   const founderLines = founders
-    .map((f) => `- ${f.full_name}${f.company_role ? ` (${f.company_role})` : ''}${f.linkedin_url ? ` LinkedIn: ${f.linkedin_url}` : ''}`)
+    .map((f) => {
+      const bits = [
+        f.full_name,
+        f.company_role || f.current_role,
+        f.education,
+        f.previous_companies,
+        f.technical_background,
+      ].filter(Boolean);
+      return `- ${bits.join(' | ')}`;
+    })
     .join('\n');
 
-  return `You are a startup research analyst. Analyze this YC / startup company for a founder researching markets and adjacent opportunities.
+  return `You are a startup research analyst. Synthesize deep research for a founder studying markets and adjacent opportunities.
 
-Do NOT invent specific funding amounts, customers, or facts that are not supported by the source text.
+Do NOT invent specific funding amounts, customers, or facts unsupported by sources.
 If unknown, say "Unknown from available sources."
 Scores are 1-10 integers.
-opportunity_score should roughly equal market_demand + problem_pain + long_term - competition_intensity (clamped 1-10).
-personal_fit_score: leave as null or mid-range unless user note implies fit — use null if unsure (send as 5).
+opportunity_score should roughly equal market_demand + problem_pain + long_term - competition (clamped 1-10).
+personal_fit_score: use 5 if unsure.
+revenue_notes / funding_notes: only restate evidenced facts; otherwise "Unknown from available sources."
 
 Company:
 Name: ${company.name}
 Batch: ${company.yc_batch || 'Unknown'}
+YC status: ${company.yc_status || 'Unknown'}
 Industry: ${company.industry || 'Unknown'}
 Location: ${company.location || 'Unknown'}
 Website: ${company.website || 'Unknown'}
 YC URL: ${company.yc_url || 'Unknown'}
 Description: ${company.short_description || 'Unknown'}
+Funding summary: ${funding?.funding_summary || company.funding_summary || 'Unknown'}
+Revenue notes: ${funding?.revenue_notes || company.revenue_notes || 'Unknown'}
 User note: ${company.user_note || 'None'}
 User tags: ${(company.tags || []).join(', ') || 'None'}
 
@@ -332,21 +841,22 @@ Founders:
 ${founderLines || 'Unknown'}
 
 YC / page text:
-${truncate(company.raw_page_text, 8000)}
+${truncate(company.raw_page_text, 6000)}
 
-Website crawl text:
-${truncate(websiteText, 8000)}
+Website / crawl text:
+${truncate(websiteText, 9000)}
 
-Return structured research covering problem, customer, why now, competitors, technical depth, AI/deep-tech angle, risks, adjacent opportunities (especially non-copy ideas), and news_signals inferred from the materials (product focus, market, hiring clues — not fake headlines).`;
+Return structured research covering problem, customer, why now, competitors, technical depth, AI/deep-tech angle, risks, adjacent opportunities (especially non-copy ideas), and news_signals inferred from materials (not fake headlines).`;
 }
 
-async function runAiAnalysis(userId, company, founders, websiteText) {
+async function runAiAnalysis(userId, company, founders, websiteText, funding) {
   try {
     const analysis = await completeStructured({
       userId,
+      model: RESEARCH_ANALYSIS_MODEL,
       schemaName: 'startup_research_analysis',
       schema: ANALYSIS_SCHEMA,
-      prompt: buildAnalysisPrompt(company, founders, websiteText),
+      prompt: buildAnalysisPrompt(company, founders, websiteText, funding),
       temperature: 0.2,
     });
 
@@ -373,6 +883,8 @@ async function runAiAnalysis(userId, company, founders, websiteText) {
     const saved = await researchDb.upsertAnalysis(userId, company.id, {
       ...analysis,
       ...scores,
+      revenue_notes: emptyToNull(analysis.revenue_notes) || funding?.revenue_notes || company.revenue_notes,
+      funding_notes: emptyToNull(analysis.funding_notes) || funding?.funding_summary || company.funding_summary,
     });
 
     if (Array.isArray(analysis.suggested_tags) && analysis.suggested_tags.length) {
@@ -392,6 +904,8 @@ async function runAiAnalysis(userId, company, founders, websiteText) {
         why_now: 'Unknown',
         insight_summary: company.user_note || company.short_description || 'Captured for research; AI analysis pending.',
         adjacent_opportunities: 'Run research again after configuring an API key.',
+        revenue_notes: company.revenue_notes || 'Unknown',
+        funding_notes: company.funding_summary || 'Unknown',
       });
 
       return { analysis: fallback, raw: {}, skipped: true };
@@ -401,11 +915,88 @@ async function runAiAnalysis(userId, company, founders, websiteText) {
   }
 }
 
+async function discoverNewsSignals(userId, company, analysis) {
+  const signals = Array.isArray(analysis.news_signals) ? analysis.news_signals : [];
+  let created = 0;
+
+  for (const signal of signals.slice(0, 8)) {
+    if (!signal?.title) continue;
+
+    try {
+      await researchDb.addNews(userId, {
+        company_id: company.id,
+        title: signal.title,
+        url: null,
+        publisher: 'AI-extracted signal',
+        news_type: signal.news_type || 'Market analysis',
+        summary: signal.summary,
+        key_signal: signal.key_signal || null,
+        importance_score: clampScore(signal.importance_score),
+        raw_text: signal.summary,
+      });
+      created += 1;
+    } catch (error) {
+      logJob(`[research ${company.id}] news signal skip: ${error.message}`);
+    }
+  }
+
+  if (company.yc_url) {
+    try {
+      await researchDb.addNews(userId, {
+        company_id: company.id,
+        title: `${company.name} listed on YC directory`,
+        url: company.yc_url,
+        publisher: 'Y Combinator',
+        news_type: 'YC announcement',
+        summary: company.short_description || analysis.one_line_understanding || null,
+        key_signal: company.yc_batch ? `Part of ${company.yc_batch}` : 'YC company',
+        importance_score: 7,
+      });
+      created += 1;
+    } catch (error) {
+      logJob(`[research ${company.id}] YC news skip: ${error.message}`);
+    }
+  }
+
+  if (hasFirecrawlKey()) {
+    try {
+      const { hits } = await searchWeb(`"${company.name}" startup`, {
+        limit: 3,
+        sources: ['news'],
+        scrape: false,
+      });
+      for (const hit of hits.slice(0, 3)) {
+        try {
+          await researchDb.addNews(userId, {
+            company_id: company.id,
+            title: hit.title || hit.url,
+            url: hit.url,
+            publisher: hit.publisher || 'Web search',
+            news_type: 'Press',
+            summary: hit.description || null,
+            key_signal: null,
+            importance_score: 5,
+            raw_text: hit.description || null,
+          });
+          created += 1;
+        } catch (error) {
+          logJob(`[research ${company.id}] press news skip: ${error.message}`);
+        }
+      }
+    } catch (error) {
+      logJob(`[research ${company.id}] news search failed: ${error.message}`);
+    }
+  }
+
+  return created;
+}
+
 async function embedCompany(userId, company, analysis) {
   try {
     const text = [
       company.name,
       company.short_description,
+      company.funding_summary,
       analysis?.one_line_understanding,
       analysis?.problem_statement,
       analysis?.insight_summary,
@@ -422,10 +1013,6 @@ async function embedCompany(userId, company, analysis) {
   } catch (error) {
     logJob(`[research ${company.id}] embedding skipped: ${error.message}`);
   }
-}
-
-async function setProgress(userId, jobId, progress) {
-  await researchDb.updateJob(userId, jobId, { progress });
 }
 
 async function processResearchJob(jobId) {
@@ -452,67 +1039,106 @@ async function processResearchJob(jobId) {
   await researchDb.updateCompany(userId, company.id, { status: 'processing' });
 
   try {
-    await setProgress(userId, jobId, { step: 'website_crawl' });
-    const crawl = await crawlCompanyWebsite(userId, company);
+    await setProgress(userId, jobId, { step: 'firecrawl_crawl' });
+    const crawl = await crawlCompanySources(userId, company);
+
+    await setProgress(userId, jobId, {
+      step: 'yc_metadata',
+      pages_crawled: crawl.pages.length,
+      crawl_engine: crawl.engine,
+    });
+
+    const { meta, skipped: metaSkipped, missingKey: metaMissingKey } = await extractYcMetadata(
+      userId,
+      company,
+      crawl.textBundle,
+    );
+
+    let working = await researchDb.getCompany(userId, company.id);
+
+    await setProgress(userId, jobId, {
+      step: 'founder_discovery',
+      pages_crawled: crawl.pages.length,
+      crawl_engine: crawl.engine,
+      yc_metadata: !metaSkipped,
+    });
+
+    let founders = await upsertFoundersFromMeta(userId, working, meta?.founders || []);
 
     await setProgress(userId, jobId, {
       step: 'founder_enrichment',
       pages_crawled: crawl.pages.length,
+      founders: founders.length,
     });
 
-    const founders = await researchDb.listFoundersForCompany(userId, company.id);
-    const founderSources = await enrichFounderSources(userId, company, founders);
+    const founderResult = await enrichFoundersDeep(userId, working, founders);
+    founders = await researchDb.listFoundersForCompany(userId, company.id);
 
     await setProgress(userId, jobId, {
-      step: 'ai_analysis',
+      step: 'funding_research',
       pages_crawled: crawl.pages.length,
-      founder_sources: founderSources,
+      founder_sources: founderResult.enriched,
     });
 
-    const refreshed = await researchDb.getCompany(userId, company.id);
+    working = await researchDb.getCompany(userId, company.id);
+    const funding = await researchFunding(userId, working, crawl.textBundle);
+
+    await setProgress(userId, jobId, {
+      step: 'ai_synthesis',
+      pages_crawled: crawl.pages.length,
+      founder_sources: founderResult.enriched,
+      funding_rounds: funding.roundsSaved || 0,
+    });
+
+    working = await researchDb.getCompany(userId, company.id);
     const { analysis, raw, skipped } = await runAiAnalysis(
       userId,
-      refreshed,
+      working,
       founders,
       crawl.textBundle,
+      funding,
     );
+
+    const aiSkipped = skipped || metaMissingKey || founderResult.missingKey || funding.missingKey;
 
     await setProgress(userId, jobId, {
       step: 'news_signals',
       pages_crawled: crawl.pages.length,
-      founder_sources: founderSources,
-      ai_skipped: skipped,
+      founder_sources: founderResult.enriched,
+      funding_rounds: funding.roundsSaved || 0,
+      ai_skipped: aiSkipped,
     });
 
-    const newsCount = await discoverNewsSignals(userId, refreshed, raw || {});
+    const newsCount = await discoverNewsSignals(userId, working, raw || {});
 
     await setProgress(userId, jobId, {
       step: 'embedding',
       pages_crawled: crawl.pages.length,
-      founder_sources: founderSources,
       news_count: newsCount,
-      ai_skipped: skipped,
     });
 
-    await embedCompany(userId, refreshed, analysis);
+    await embedCompany(userId, working, analysis);
 
     await researchDb.updateCompany(userId, company.id, {
-      status: skipped ? 'needs_review' : 'processed',
+      status: aiSkipped ? 'needs_review' : 'processed',
     });
 
     await researchDb.updateJob(userId, jobId, {
-      status: skipped ? 'needs_review' : 'completed',
+      status: aiSkipped ? 'needs_review' : 'completed',
       completed_at: Date.now(),
       progress: {
         step: 'done',
         pages_crawled: crawl.pages.length,
-        founder_sources: founderSources,
+        crawl_engine: crawl.engine,
+        yc_metadata: !metaSkipped,
+        founder_sources: founderResult.enriched,
+        funding_rounds: funding.roundsSaved || 0,
         news_count: newsCount,
-        ai_skipped: skipped,
+        ai_skipped: aiSkipped,
       },
     });
 
-    logJob(`[research ${jobId}] completed for ${company.name}`);
+    logJob(`[research ${jobId}] completed for ${company.name} via ${crawl.engine}`);
   } catch (error) {
     await researchDb.updateJob(userId, jobId, {
       status: 'failed',

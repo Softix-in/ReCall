@@ -7,6 +7,7 @@ const SOURCE_TYPE_LABELS = {
   link: 'Link',
   'yc-startup': 'YC Startup',
   pdf: 'PDF',
+  documentation: 'Documentation',
 };
 
 function formatDateIso(ms) {
@@ -47,6 +48,14 @@ function toMarkdown(items) {
     if (item.summary) {
       lines.push('');
       lines.push(item.summary);
+    }
+    if (item.source_type === 'documentation' && item.content?.trim()) {
+      lines.push('');
+      lines.push('### Knowledge file');
+      lines.push('');
+      lines.push('```yaml');
+      lines.push(item.content.trim());
+      lines.push('```');
     }
     lines.push('');
     lines.push('---');

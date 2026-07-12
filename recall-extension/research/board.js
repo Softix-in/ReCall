@@ -75,7 +75,7 @@ function renderCompanyList() {
     btn.className = `company-row${company.id === state.selectedId ? ' active' : ''}`;
     btn.innerHTML = `
       <h3>${escapeHtml(company.name)}</h3>
-      <p class="meta">${escapeHtml([company.yc_batch, company.industry].filter(Boolean).join(' · '))}</p>
+      <p class="meta">${escapeHtml([company.yc_batch, company.yc_status, company.industry].filter(Boolean).join(' · '))}</p>
       <p class="desc">${escapeHtml(company.short_description || '')}</p>
       <span class="status-pill ${escapeHtml(company.status)}">${escapeHtml(company.status)}</span>
     `;
@@ -124,14 +124,14 @@ function renderDetail() {
     return;
   }
 
-  const { company, analysis, founders, news, pages, jobs } = detail;
+  const { company, analysis, founders, news, pages, jobs, funding } = detail;
   const latestJob = jobs?.[0];
 
   pane.innerHTML = `
     <div class="detail-header">
       <h2>${escapeHtml(company.name)}</h2>
       <p class="meta">
-        ${escapeHtml([company.yc_batch, company.industry, company.location].filter(Boolean).join(' · '))}
+        ${escapeHtml([company.yc_batch, company.yc_status, company.industry, company.location].filter(Boolean).join(' · '))}
         · <span class="status-pill ${escapeHtml(company.status)}">${escapeHtml(company.status)}</span>
       </p>
       ${company.short_description ? `<p style="margin-top:12px;color:var(--text-2)">${escapeHtml(company.short_description)}</p>` : ''}
@@ -147,6 +147,23 @@ function renderDetail() {
     </div>
 
     ${company.user_note ? `<div class="section"><h3>Your note</h3><p>${escapeHtml(company.user_note)}</p></div>` : ''}
+
+    ${company.funding_summary || company.revenue_notes || funding?.length ? `
+      <div class="section">
+        <h3>Funding & revenue</h3>
+        ${company.funding_summary ? `<p><strong style="color:var(--text)">Summary:</strong> ${escapeHtml(company.funding_summary)}</p>` : ''}
+        ${company.revenue_notes ? `<p style="margin-top:8px"><strong style="color:var(--text)">Revenue:</strong> ${escapeHtml(company.revenue_notes)}</p>` : ''}
+        ${funding?.length ? `<ul style="margin-top:12px">${funding.map((r) => `
+          <li>
+            <strong style="color:var(--text)">${escapeHtml([r.round_name, r.amount].filter(Boolean).join(' · ') || 'Round')}</strong>
+            ${r.announced_date ? ` · ${escapeHtml(r.announced_date)}` : ''}
+            ${r.investors ? `<div style="margin-top:4px">Investors: ${escapeHtml(r.investors)}</div>` : ''}
+            ${r.evidence_quote ? `<div style="margin-top:4px;color:var(--muted)">${escapeHtml(r.evidence_quote)}</div>` : ''}
+            ${r.source_url ? `<div style="margin-top:4px"><a href="${escapeHtml(r.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(r.source_title || 'Source')}</a>${r.confidence ? ` · confidence ${escapeHtml(r.confidence)}/10` : ''}</div>` : ''}
+          </li>
+        `).join('')}</ul>` : ''}
+      </div>
+    ` : ''}
 
     ${analysis ? `
       <div class="section">
@@ -181,6 +198,13 @@ function renderDetail() {
         <h3>Risks</h3>
         <p>${escapeHtml(analysis.risks || '—')}</p>
       </div>
+      ${analysis.funding_notes || analysis.revenue_notes ? `
+        <div class="section">
+          <h3>Analysis notes on money</h3>
+          ${analysis.funding_notes ? `<p>${escapeHtml(analysis.funding_notes)}</p>` : ''}
+          ${analysis.revenue_notes ? `<p style="margin-top:8px">${escapeHtml(analysis.revenue_notes)}</p>` : ''}
+        </div>
+      ` : ''}
       ${scoreCards(analysis)}
     ` : '<div class="section"><h3>Analysis</h3><p>Still processing or awaiting AI key.</p></div>'}
 
@@ -189,11 +213,16 @@ function renderDetail() {
       ${founders?.length ? `<ul>${founders.map((f) => `
         <li>
           <strong style="color:var(--text)">${escapeHtml(f.full_name)}</strong>
-          ${f.company_role ? ` · ${escapeHtml(f.company_role)}` : ''}
+          ${f.company_role || f.current_role ? ` · ${escapeHtml(f.company_role || f.current_role)}` : ''}
+          ${f.public_bio ? `<div style="margin-top:4px">${escapeHtml(f.public_bio)}</div>` : ''}
+          ${f.education ? `<div style="margin-top:4px;color:var(--muted)">Education: ${escapeHtml(f.education)}</div>` : ''}
+          ${f.previous_companies ? `<div style="margin-top:4px;color:var(--muted)">Previous: ${escapeHtml(f.previous_companies)}</div>` : ''}
+          ${f.technical_background ? `<div style="margin-top:4px;color:var(--muted)">Tech: ${escapeHtml(f.technical_background)}</div>` : ''}
           <div style="margin-top:4px">
             ${f.linkedin_url ? `<a href="${escapeHtml(f.linkedin_url)}" target="_blank" rel="noreferrer">LinkedIn</a> ` : ''}
             ${f.twitter_url ? `<a href="${escapeHtml(f.twitter_url)}" target="_blank" rel="noreferrer">Twitter</a> ` : ''}
-            ${f.github_url ? `<a href="${escapeHtml(f.github_url)}" target="_blank" rel="noreferrer">GitHub</a>` : ''}
+            ${f.github_url ? `<a href="${escapeHtml(f.github_url)}" target="_blank" rel="noreferrer">GitHub</a> ` : ''}
+            ${f.personal_website ? `<a href="${escapeHtml(f.personal_website)}" target="_blank" rel="noreferrer">Site</a>` : ''}
           </div>
         </li>
       `).join('')}</ul>` : '<p>No founders captured.</p>'}
@@ -207,6 +236,7 @@ function renderDetail() {
           ${n.news_type ? ` · ${escapeHtml(n.news_type)}` : ''}
           ${n.summary ? `<div style="margin-top:4px">${escapeHtml(n.summary)}</div>` : ''}
           ${n.key_signal ? `<div style="margin-top:4px;color:var(--muted)">${escapeHtml(n.key_signal)}</div>` : ''}
+          ${n.url ? `<div style="margin-top:4px"><a href="${escapeHtml(n.url)}" target="_blank" rel="noreferrer">Open</a></div>` : ''}
         </li>
       `).join('')}</ul>` : '<p>No news rows yet.</p>'}
     </div>
@@ -218,14 +248,17 @@ function renderDetail() {
           <strong style="color:var(--text)">${escapeHtml(p.page_type || 'page')}</strong>
           · <a href="${escapeHtml(p.url)}" target="_blank" rel="noreferrer">${escapeHtml(p.title || p.url)}</a>
         </li>
-      `).join('')}</ul>` : '<p>No website pages crawled.</p>'}
+      `).join('')}</ul>` : '<p>No pages stored.</p>'}
     </div>
 
     ${latestJob ? `
       <div class="section">
         <h3>Latest job</h3>
-        <p>${escapeHtml(latestJob.status)} · ${escapeHtml(latestJob.progress?.step || '')}
-        ${latestJob.error_message ? ` — ${escapeHtml(latestJob.error_message)}` : ''}</p>
+        <p>${escapeHtml(latestJob.status)} · step ${escapeHtml(latestJob.progress?.step || '—')}
+        ${latestJob.progress?.crawl_engine ? ` · ${escapeHtml(latestJob.progress.crawl_engine)}` : ''}
+        ${latestJob.progress?.funding_rounds != null ? ` · ${escapeHtml(latestJob.progress.funding_rounds)} funding rounds` : ''}
+        ${latestJob.error_message ? `<br><span style="color:var(--danger)">${escapeHtml(latestJob.error_message)}</span>` : ''}
+        </p>
       </div>
     ` : ''}
   `;

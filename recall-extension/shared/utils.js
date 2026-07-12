@@ -66,6 +66,8 @@ export function sourceTypeLabel(type) {
       return 'Social';
     case 'pdf':
       return 'PDF';
+    case 'documentation':
+      return 'Documentation';
     default:
       return type || 'Link';
   }
@@ -81,6 +83,8 @@ export function sourceTypeIcon(type) {
       return '♪';
     case 'yc-startup':
       return '◎';
+    case 'documentation':
+      return '📚';
     default:
       return '🔗';
   }

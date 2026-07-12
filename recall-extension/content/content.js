@@ -19,6 +19,107 @@ function scrapePage() {
   };
 }
 
+const DOC_CONTENT_SELECTORS = [
+  'main',
+  'article',
+  '[role="main"]',
+  '.docs-content',
+  '.doc-content',
+  '.documentation',
+  '#content',
+  '#main-content',
+  '.markdown-body',
+  '.theme-doc-markdown',
+];
+
+function findDocumentationRoot() {
+  for (const selector of DOC_CONTENT_SELECTORS) {
+    const el = document.querySelector(selector);
+    if (el && textOf(el).length > 200) {
+      return el;
+    }
+  }
+
+  return document.body;
+}
+
+function guessCodeLang(element) {
+  const className = element.className || '';
+  const match = className.match(/language-(\w+)/);
+  if (match) return match[1];
+
+  const dataLang = element.getAttribute('data-language') || element.getAttribute('data-lang');
+  return dataLang || 'text';
+}
+
+function extractDocumentation() {
+  const root = findDocumentationRoot();
+  const sections = [];
+  let current = null;
+  let charCount = 0;
+
+  const blockElements = root.querySelectorAll('h1, h2, h3, h4, h5, h6, p, pre, ul, ol, table, blockquote, li');
+
+  for (const el of blockElements) {
+    if (el.closest('nav, header, footer, aside, [role="navigation"], .sidebar, .nav')) {
+      continue;
+    }
+
+    const tag = el.tagName;
+
+    if (/^H[1-6]$/.test(tag)) {
+      if (current) {
+        sections.push(current);
+      }
+
+      current = {
+        heading: textOf(el),
+        level: Number(tag[1]),
+        blocks: [],
+      };
+      continue;
+    }
+
+    if (!current) {
+      current = {
+        heading: 'Overview',
+        level: 1,
+        blocks: [],
+      };
+    }
+
+    if (tag === 'PRE') {
+      const code = el.textContent?.trim() || '';
+      if (code) {
+        current.blocks.push({ type: 'code', lang: guessCodeLang(el), text: code });
+        charCount += code.length;
+      }
+      continue;
+    }
+
+    const text = textOf(el);
+    if (!text || text.length < 2) {
+      continue;
+    }
+
+    current.blocks.push({ type: 'text', text });
+    charCount += text.length;
+  }
+
+  if (current) {
+    sections.push(current);
+  }
+
+  const page = scrapePage();
+
+  return {
+    ...page,
+    hash: window.location.hash || null,
+    sections,
+    char_count: charCount,
+  };
+}
+
 function getSelectedText() {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed) return null;
@@ -205,6 +306,40 @@ function scrapeYcCompany() {
   };
 }
 
+function scrapeStartupPage() {
+  const yc = scrapeYcCompany();
+  if (yc) {
+    return yc;
+  }
+
+  const page = scrapePage();
+  const h1 = document.querySelector('h1');
+  const companyName =
+    textOf(h1)?.split(/[·|—-]/)[0]?.trim() ||
+    page.og_title?.split(/[·|—-]/)[0]?.trim() ||
+    page.title?.split(/[·|—-]/)[0]?.trim() ||
+    page.domain?.replace(/^www\./i, '').split('.')[0] ||
+    'Unknown company';
+
+  const description = page.og_description || textOf(document.querySelector('main p, article p, p')) || null;
+  const visibleText = (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 50_000);
+
+  return {
+    page_type: 'company_website',
+    ...page,
+    yc_url: null,
+    company_name: companyName,
+    batch: null,
+    short_description: description,
+    industry: null,
+    location: null,
+    team_size: null,
+    website: window.location.origin + '/',
+    founders: extractFounders(),
+    visible_text: visibleText,
+  };
+}
+
 function showHighlightToast() {
   if (document.getElementById('recall-hl-toast')) return;
 
@@ -300,6 +435,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return false;
     }
     sendResponse({ ok: true, data });
+    return false;
+  }
+
+  if (message.type === 'SCRAPE_STARTUP_PAGE') {
+    sendResponse({ ok: true, data: scrapeStartupPage() });
+    return false;
+  }
+
+  if (message.type === 'EXTRACT_DOCUMENTATION') {
+    sendResponse({ ok: true, data: extractDocumentation() });
     return false;
   }
 

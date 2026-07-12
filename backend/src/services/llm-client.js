@@ -3,9 +3,10 @@ const config = require('../config');
 const profileDb = require('../db/profile');
 
 const FIREWORKS_BASE_URL = 'https://api.fireworks.ai/inference/v1';
-const DEFAULT_QUALITY_MODEL = 'accounts/fireworks/models/deepseek-v3p1';
+const DEFAULT_QUALITY_MODEL = 'accounts/fireworks/models/minimax-m3';
 const DEFAULT_CHAT_MODEL = 'accounts/fireworks/models/kimi-k2-instruct-0905';
 const DEFAULT_REASONING_MODEL = 'accounts/fireworks/models/glm-5p2';
+const RESEARCH_ANALYSIS_MODEL = 'accounts/fireworks/models/minimax-m3';
 
 class LlmError extends Error {
   constructor(message, { code, status } = {}) {
@@ -289,5 +290,6 @@ module.exports = {
   DEFAULT_QUALITY_MODEL,
   DEFAULT_CHAT_MODEL,
   DEFAULT_REASONING_MODEL,
+  RESEARCH_ANALYSIS_MODEL,
   mapClientError,
 };

@@ -66,6 +66,20 @@ async function findCompanyByYcUrl(userId, ycUrl) {
   });
 }
 
+async function findCompanyByWebsite(userId, website) {
+  if (!website) return null;
+
+  return withUserContext(userId, async (client) => {
+    const result = await client.query(
+      `SELECT * FROM research_companies
+       WHERE user_id = $1 AND website = $2
+       LIMIT 1`,
+      [userId, website],
+    );
+    return rowToCompany(result.rows[0]);
+  });
+}
+
 async function createCompany(userId, input) {
   const id = crypto.randomUUID();
   const now = Date.now();
@@ -114,6 +128,7 @@ async function updateCompany(userId, companyId, patch) {
     'name', 'yc_batch', 'yc_url', 'website', 'short_description', 'industry',
     'location', 'founded_year', 'team_size', 'status', 'source_url', 'item_id',
     'tags', 'user_note', 'raw_page_text', 'embedding',
+    'yc_status', 'revenue_notes', 'funding_summary',
   ]);
 
   const sets = [];
@@ -311,6 +326,7 @@ async function upsertAnalysis(userId, companyId, analysis) {
       'opportunity_score', 'personal_fit_score', 'market_demand_score',
       'problem_pain_score', 'technical_depth_score', 'competition_score',
       'buildability_score', 'long_term_score',
+      'revenue_notes', 'funding_notes',
     ];
 
     if (existing.rows[0]) {
@@ -375,7 +391,7 @@ async function createFounder(userId, input) {
   return withUserContext(userId, async (client) => {
     const result = await client.query(
       `INSERT INTO research_founders (
-        id, user_id, full_name, current_role, linkedin_url, twitter_url,
+        id, user_id, full_name, "current_role", linkedin_url, twitter_url,
         github_url, personal_website, location, education, previous_companies,
         previous_startups, technical_background, domain_expertise, achievements,
         public_bio, created_at, updated_at
@@ -406,6 +422,55 @@ async function createFounder(userId, input) {
         now,
         now,
       ],
+    );
+    return rowToFounder(result.rows[0]);
+  });
+}
+
+async function updateFounder(userId, founderId, patch) {
+  const allowed = new Set([
+    'full_name', 'current_role', 'linkedin_url', 'twitter_url', 'github_url',
+    'personal_website', 'location', 'education', 'previous_companies',
+    'previous_startups', 'technical_background', 'domain_expertise',
+    'achievements', 'public_bio',
+  ]);
+
+  const sets = [];
+  const values = [];
+  let i = 1;
+
+  for (const [key, value] of Object.entries(patch)) {
+    if (!allowed.has(key)) continue;
+    const column = key === 'current_role' ? '"current_role"' : key;
+    sets.push(`${column} = $${i}`);
+    values.push(value);
+    i += 1;
+  }
+
+  if (sets.length === 0) {
+    return withUserContext(userId, async (client) => {
+      const result = await client.query(
+        'SELECT * FROM research_founders WHERE id = $1 AND user_id = $2',
+        [founderId, userId],
+      );
+      return rowToFounder(result.rows[0]);
+    });
+  }
+
+  sets.push(`updated_at = $${i}`);
+  values.push(Date.now());
+  i += 1;
+
+  values.push(founderId);
+  values.push(userId);
+
+  return withUserContext(userId, async (client) => {
+    const result = await client.query(
+      `UPDATE research_founders
+       SET ${sets.join(', ')}
+       WHERE id = $${i} AND user_id = $${i + 1}
+       RETURNING *`,
+      values,
     );
     return rowToFounder(result.rows[0]);
   });
@@ -473,6 +538,76 @@ async function addFounderSource(userId, input) {
       ],
     );
     return result.rows[0];
+  });
+}
+
+function rowToFunding(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    confidence: row.confidence != null ? Number(row.confidence) : null,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  };
+}
+
+async function addFunding(userId, input) {
+  const id = crypto.randomUUID();
+  const now = Date.now();
+
+  return withUserContext(userId, async (client) => {
+    const result = await client.query(
+      `INSERT INTO research_company_funding (
+        id, company_id, user_id, round_name, amount, currency, announced_date,
+        investors, valuation, source_url, source_title, evidence_quote,
+        confidence, notes, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11, $12,
+        $13, $14, $15, $16
+      )
+      RETURNING *`,
+      [
+        id,
+        input.company_id,
+        userId,
+        input.round_name ?? null,
+        input.amount ?? null,
+        input.currency ?? null,
+        input.announced_date ?? null,
+        input.investors ?? null,
+        input.valuation ?? null,
+        input.source_url ?? null,
+        input.source_title ?? null,
+        input.evidence_quote ?? null,
+        input.confidence ?? null,
+        input.notes ?? null,
+        now,
+        now,
+      ],
+    );
+    return rowToFunding(result.rows[0]);
+  });
+}
+
+async function listFundingForCompany(userId, companyId) {
+  return withUserContext(userId, async (client) => {
+    const result = await client.query(
+      `SELECT * FROM research_company_funding
+       WHERE company_id = $1 AND user_id = $2
+       ORDER BY created_at DESC`,
+      [companyId, userId],
+    );
+    return result.rows.map(rowToFunding);
+  });
+}
+
+async function clearFundingForCompany(userId, companyId) {
+  return withUserContext(userId, async (client) => {
+    await client.query(
+      'DELETE FROM research_company_funding WHERE company_id = $1 AND user_id = $2',
+      [companyId, userId],
+    );
   });
 }
 
@@ -627,13 +762,14 @@ async function getCompanyDetail(userId, companyId) {
   const company = await getCompany(userId, companyId);
   if (!company) return null;
 
-  const [analysis, founders, news, pages, sources, jobs] = await Promise.all([
+  const [analysis, founders, news, pages, sources, jobs, funding] = await Promise.all([
     getAnalysis(userId, companyId),
     listFoundersForCompany(userId, companyId),
     listNewsForCompany(userId, companyId),
     listPagesForCompany(userId, companyId),
     listSourcesForCompany(userId, companyId),
     listJobsForCompany(userId, companyId, 5),
+    listFundingForCompany(userId, companyId),
   ]);
 
   return {
@@ -644,6 +780,7 @@ async function getCompanyDetail(userId, companyId) {
     pages,
     sources,
     jobs,
+    funding,
   };
 }
 
@@ -679,6 +816,7 @@ async function getStatusCounts(userId) {
 
 module.exports = {
   findCompanyByYcUrl,
+  findCompanyByWebsite,
   createCompany,
   updateCompany,
   getCompany,
@@ -693,9 +831,13 @@ module.exports = {
   upsertAnalysis,
   getAnalysis,
   createFounder,
+  updateFounder,
   linkFounderToCompany,
   listFoundersForCompany,
   addFounderSource,
+  addFunding,
+  listFundingForCompany,
+  clearFundingForCompany,
   addNews,
   listNewsForCompany,
   addCompanyPage,

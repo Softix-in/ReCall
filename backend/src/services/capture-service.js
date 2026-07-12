@@ -2,6 +2,42 @@ const config = require('../config');
 const itemsDb = require('../db/items');
 const { classifyUrl } = require('../pipeline/classify');
 
+function normalizeUrlWithHash(url, hash) {
+  if (!hash || hash === '#') {
+    return url;
+  }
+
+  try {
+    const parsed = new URL(url);
+    parsed.hash = hash.startsWith('#') ? hash : `#${hash}`;
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function parseCaptureMetaInput(body) {
+  const base = {
+    og_type: body.og_type ?? null,
+    has_video: Boolean(body.has_video),
+    og_description: body.og_description ?? null,
+  };
+
+  if (body.capture_meta && typeof body.capture_meta === 'object') {
+    return { ...base, ...body.capture_meta };
+  }
+
+  if (typeof body.capture_meta === 'string') {
+    try {
+      return { ...base, ...JSON.parse(body.capture_meta) };
+    } catch {
+      return base;
+    }
+  }
+
+  return base;
+}
+
 function normalizeCapturePayload(body) {
   const url = body.url?.trim();
 
@@ -13,8 +49,8 @@ function normalizeCapturePayload(body) {
 
   const save_mode = body.save_mode || 'auto_scrape';
 
-  if (!['auto_scrape', 'manual_note'].includes(save_mode)) {
-    const error = new Error('save_mode must be auto_scrape or manual_note');
+  if (!['auto_scrape', 'manual_note', 'doc_extract'].includes(save_mode)) {
+    const error = new Error('save_mode must be auto_scrape, manual_note, or doc_extract');
     error.status = 400;
     throw error;
   }
@@ -35,20 +71,21 @@ function normalizeCapturePayload(body) {
     }
   }
 
-  const captureMeta = {
-    og_type: body.og_type ?? null,
-    has_video: Boolean(body.has_video),
-    og_description: body.og_description ?? null,
-  };
+  const captureMeta = parseCaptureMetaInput(body);
 
-  const source_type = body.source_type
-    || classifyUrl(url, {
+  const normalizedUrl = save_mode === 'doc_extract'
+    ? normalizeUrlWithHash(url, captureMeta.hash || body.hash)
+    : url;
+
+  const source_type = save_mode === 'doc_extract'
+    ? 'documentation'
+    : (body.source_type || classifyUrl(normalizedUrl, {
       og_type: captureMeta.og_type,
       has_video: captureMeta.has_video,
-    });
+    }));
 
   return {
-    url,
+    url: normalizedUrl,
     title: body.title ?? body.og_title ?? null,
     summary: body.summary ?? null,
     content: body.content ?? null,

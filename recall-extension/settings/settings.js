@@ -240,6 +240,16 @@ $('saveAiSettings').addEventListener('click', async () => {
       payload.fireworks_api_key = fireworks_api_key;
     }
 
+    const qualityModel = $('aiQualityModel').value.trim();
+    if (qualityModel) {
+      payload.ai_quality_model = qualityModel;
+    }
+
+    const chatModel = $('aiChatModel').value.trim();
+    if (chatModel) {
+      payload.ai_chat_model = chatModel;
+    }
+
     await updateProfileAiSettings(payload);
     $('fireworksApiKey').value = '';
     $('aiStatus').textContent = 'AI settings saved';

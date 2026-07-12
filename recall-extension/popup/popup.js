@@ -2,8 +2,10 @@ import {
   clearTestData,
   deleteItem,
   getFailedJobs,
+  getResearchJob,
   getSearchRecommendations,
   isAuthError,
+  researchStartup,
   retryItem,
   search,
 } from '../shared/api.js';
@@ -33,6 +35,8 @@ const state = {
   ycExtracted: null,
   researchJobId: null,
   researchPollTimer: null,
+  crawlJobId: null,
+  crawlPollTimer: null,
 };
 
 const recentLiveSearch = createLiveSearchRunner({ debounceMs: 220, minLength: 2 });
@@ -479,21 +483,82 @@ function updateVaultMode(mode) {
   });
 
   const noteArea = $('#vault-note-area');
+  const crawlArea = $('#vault-crawl-area');
   const hint = $('#vault-hint');
   const saveBtn = $('#vault-save-btn');
 
   const showNote = mode === 'manual_note';
+  const showCrawl = mode === 'crawl_section';
+
   noteArea.hidden = !showNote;
   noteArea.classList.toggle('visible', showNote);
+  crawlArea.hidden = !showCrawl;
+  crawlArea.classList.toggle('visible', showCrawl);
 
   if (showNote) {
     hint.textContent = 'Only metadata is fetched. Your note becomes the summary and search text.';
     saveBtn.textContent = 'Save with note';
     $('#vault-note').focus();
+  } else if (mode === 'doc_extract') {
+    hint.textContent = 'Extract this URL as an LLM-friendly YAML knowledge file via Firecrawl.';
+    saveBtn.textContent = 'Extract knowledge';
+  } else if (showCrawl) {
+    hint.textContent = 'Crawl a docs section with Firecrawl map + scrape. Each page is saved as documentation.';
+    saveBtn.textContent = 'Start crawl';
   } else {
     hint.textContent = 'Recall will fetch the page, extract content, summarise it, and make it searchable.';
     saveBtn.textContent = 'Save link';
   }
+}
+
+function stopCrawlPolling() {
+  if (state.crawlPollTimer) {
+    clearInterval(state.crawlPollTimer);
+    state.crawlPollTimer = null;
+  }
+}
+
+function formatCrawlProgress(job) {
+  let text = `Status: ${job.status}`;
+
+  if (job.pages_found != null) {
+    text += ` · found ${job.pages_found}`;
+  }
+  if (job.pages_saved != null) {
+    text += ` · saved ${job.pages_saved}`;
+  }
+  if (job.error_message) {
+    text += ` — ${job.error_message}`;
+  }
+
+  return text;
+}
+
+async function pollCrawlJob() {
+  if (!state.crawlJobId) return;
+
+  const response = await sendMessage({ type: 'GET_DOC_CRAWL_JOB', id: state.crawlJobId });
+  if (!response?.ok || !response.result?.job) return;
+
+  const { job } = response.result;
+  const statusEl = $('#crawl-status');
+  statusEl.hidden = false;
+  statusEl.className = `research-status ${job.status}`;
+  statusEl.textContent = formatCrawlProgress(job);
+
+  if (['done', 'failed'].includes(job.status)) {
+    stopCrawlPolling();
+    await refreshFooter();
+  }
+}
+
+function startCrawlPolling(jobId) {
+  stopCrawlPolling();
+  state.crawlJobId = jobId;
+  pollCrawlJob();
+  state.crawlPollTimer = setInterval(() => {
+    pollCrawlJob().catch(() => {});
+  }, 3000);
 }
 
 function parseTagsInput(value) {
@@ -512,7 +577,7 @@ function renderYcResearchCard(data) {
   if (!data) {
     card.hidden = true;
     hint.hidden = false;
-    hint.textContent = 'Open a YC company page (ycombinator.com/companies/…) to research it.';
+    hint.textContent = 'Open a startup website or YC company page, then research it.';
     btn.disabled = true;
     state.ycExtracted = null;
     return;
@@ -523,29 +588,99 @@ function renderYcResearchCard(data) {
   state.ycExtracted = data;
 
   $('#research-name').textContent = data.company_name || 'Unknown company';
-  $('#research-batch').textContent = [data.batch, data.industry, data.location].filter(Boolean).join(' · ');
+  $('#research-batch').textContent = [data.batch, data.industry, data.location, data.domain]
+    .filter(Boolean)
+    .join(' · ');
   $('#research-desc').textContent = data.short_description || data.og_description || '';
 
   const founders = Array.isArray(data.founders) ? data.founders : [];
   $('#research-founders').textContent = founders.length
     ? `Founders: ${founders.map((f) => f.full_name).join(', ')}`
-    : 'Founders: not detected on page';
+    : data.page_type === 'yc_company'
+      ? 'Founders: not detected on page'
+      : 'Company website · founders optional';
 
   btn.disabled = false;
 }
 
-async function loadYcResearchPanel() {
-  const response = await sendMessage({ type: 'SCRAPE_YC_ACTIVE_TAB' });
+function isRestrictedTabUrl(url) {
+  if (!url) return true;
+  return ['chrome:', 'chrome-extension:', 'edge:', 'about:', 'devtools:', 'view-source:']
+    .some((prefix) => url.startsWith(prefix));
+}
 
-  if (!response?.ok) {
-    renderYcResearchCard(null);
-    if (response?.error && !/Not a YC/i.test(response.error)) {
-      $('#research-hint').textContent = response.error;
-    }
-    return;
+function sendTabMessage(tabId, message) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+async function scrapeStartupFromActiveTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  if (!tab?.id) {
+    throw new Error('No active browser tab found');
   }
 
-  renderYcResearchCard(response.data);
+  if (isRestrictedTabUrl(tab.url)) {
+    throw new Error('Open a normal website tab first, then open Recall.');
+  }
+
+  let response;
+
+  try {
+    response = await sendTabMessage(tab.id, { type: 'SCRAPE_STARTUP_PAGE' });
+  } catch {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['content/content.js'],
+    });
+    response = await sendTabMessage(tab.id, { type: 'SCRAPE_STARTUP_PAGE' });
+  }
+
+  if (!response?.ok || !response.data) {
+    // Fallback for stale content scripts that don't know SCRAPE_STARTUP_PAGE yet
+    try {
+      const page = await sendTabMessage(tab.id, { type: 'SCRAPE_PAGE' });
+      if (page?.ok && page.data) {
+        const domain = page.data.domain || '';
+        const name = (page.data.og_title || page.data.title || domain)
+          .split(/[·|—-]/)[0]
+          .trim();
+        return {
+          page_type: 'company_website',
+          ...page.data,
+          company_name: name || 'Unknown company',
+          website: page.data.url,
+          short_description: page.data.og_description || null,
+          founders: [],
+          visible_text: page.data.og_description || '',
+        };
+      }
+    } catch {
+      // ignore
+    }
+
+    throw new Error(response?.error || 'Could not read this page. Refresh it, then try again.');
+  }
+
+  return response.data;
+}
+
+async function loadYcResearchPanel() {
+  try {
+    const data = await scrapeStartupFromActiveTab();
+    renderYcResearchCard(data);
+  } catch (error) {
+    renderYcResearchCard(null);
+    $('#research-hint').textContent = error.message || 'Could not read this page.';
+  }
 }
 
 function stopResearchPolling() {
@@ -593,17 +728,24 @@ function formatResearchProgress(job) {
 async function pollResearchJob() {
   if (!state.researchJobId) return;
 
-  const response = await sendMessage({ type: 'GET_RESEARCH_JOB', id: state.researchJobId });
-  if (!response?.ok || !response.result?.job) return;
+  try {
+    const data = await getResearchJob(state.researchJobId);
+    const job = data?.job;
+    if (!job) return;
 
-  const { job } = response.result;
-  const statusEl = $('#research-status');
-  statusEl.hidden = false;
-  statusEl.className = `research-status ${job.status}`;
-  statusEl.textContent = formatResearchProgress(job);
+    const statusEl = $('#research-status');
+    statusEl.hidden = false;
+    statusEl.className = `research-status ${job.status}`;
+    statusEl.textContent = formatResearchProgress(job);
 
-  if (['completed', 'failed', 'needs_review'].includes(job.status)) {
-    stopResearchPolling();
+    if (['completed', 'failed', 'needs_review'].includes(job.status)) {
+      stopResearchPolling();
+    }
+  } catch (error) {
+    if (isAuthError(error)) {
+      stopResearchPolling();
+      window.location.replace(getLoginUrl());
+    }
   }
 }
 
@@ -673,6 +815,28 @@ function bindEvents() {
     await refreshFooter();
   });
 
+  $('#extract-knowledge-btn').addEventListener('click', async () => {
+    $('#extract-knowledge-btn').disabled = true;
+
+    const response = await sendMessage({ type: 'EXTRACT_KNOWLEDGE' });
+    $('#extract-knowledge-btn').disabled = false;
+
+    if (response?.authRequired) {
+      window.location.replace(getLoginUrl());
+      return;
+    }
+
+    if (!response?.ok) {
+      showToast(response?.error || 'Extract failed', 'error');
+      return;
+    }
+
+    state.lastCaptureId = response.result.id;
+    showToast('Knowledge extraction queued');
+    await refreshQueueStatus();
+    await refreshFooter();
+  });
+
   $('#save-note-btn').addEventListener('click', async () => {
     const note = $('#capture-note').value;
 
@@ -728,12 +892,38 @@ function bindEvents() {
     const payload = {
       url,
       domain,
-      save_mode: state.vaultMode,
+      save_mode: state.vaultMode === 'crawl_section' ? 'doc_extract' : state.vaultMode,
       note: state.vaultMode === 'manual_note' ? $('#vault-note').value.trim() : null,
     };
 
     if (state.vaultMode === 'manual_note' && !payload.note) {
       showToast('Note is required in note mode', 'error');
+      return;
+    }
+
+    if (state.vaultMode === 'crawl_section') {
+      const response = await sendMessage({
+        type: 'START_DOC_CRAWL',
+        payload: {
+          seed_url: url,
+          path_filter: $('#vault-path-filter').value.trim() || null,
+          max_pages: Number($('#vault-max-pages').value) || 10,
+        },
+      });
+
+      if (response?.authRequired) {
+        window.location.replace(getLoginUrl());
+        return;
+      }
+
+      if (!response?.ok) {
+        showToast(response?.error || 'Crawl failed to start', 'error');
+        return;
+      }
+
+      $('#vault-url').value = '';
+      showToast('Docs crawl started');
+      startCrawlPolling(response.result.id);
       return;
     }
 
@@ -767,29 +957,33 @@ function bindEvents() {
     const note = $('#research-note').value.trim();
     const tags = parseTagsInput($('#research-tags').value);
 
-    const response = await sendMessage({
-      type: 'RESEARCH_YC_STARTUP',
-      extracted: state.ycExtracted,
-      note: note || null,
-      tags,
-    });
+    try {
+      let extracted = state.ycExtracted;
+      if (!extracted) {
+        extracted = await scrapeStartupFromActiveTab();
+        state.ycExtracted = extracted;
+      }
 
-    if (response?.authRequired) {
-      window.location.replace(getLoginUrl());
-      return;
-    }
+      const result = await researchStartup({
+        trigger_url: extracted.yc_url || extracted.website || extracted.url,
+        trigger_type: extracted.page_type === 'yc_company' ? 'yc_company_page' : 'company_website',
+        note: note || null,
+        tags,
+        extracted,
+      });
 
-    if (!response?.ok) {
-      showToast(response?.error || 'Research failed', 'error');
+      showToast(`Research queued · ${result.founders_count || 0} founder(s)`);
+      startResearchPolling(result.research_job_id);
+      await refreshFooter();
+    } catch (error) {
+      if (isAuthError(error)) {
+        window.location.replace(getLoginUrl());
+        return;
+      }
+      showToast(error.message || 'Research failed', 'error');
+    } finally {
       btn.disabled = false;
-      return;
     }
-
-    const result = response.result;
-    showToast(`Research queued · ${result.founders_count || 0} founder(s)`);
-    startResearchPolling(result.research_job_id);
-    btn.disabled = false;
-    await refreshFooter();
   });
 
   chrome.runtime.onMessage.addListener((message) => {

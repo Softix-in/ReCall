@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const itemsDb = require('../db/items');
 const embedClient = require('../services/embed-client');
+const { pickRelevantSections } = require('../services/document-knowledge-service');
 const { logDaemon } = require('../utils/logger');
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST || '127.0.0.1';
@@ -68,7 +69,7 @@ function ollamaGenerate(prompt, signal) {
   });
 }
 
-function buildContext(items) {
+function buildContext(items, question) {
   return items
     .map((item, i) => {
       const lines = [
@@ -77,6 +78,17 @@ function buildContext(items) {
       ];
       if (item.summary) lines.push(`Summary: ${item.summary}`);
       if (item.note) lines.push(`Note: ${item.note}`);
+
+      if (item.source_type === 'documentation' && item.content?.trim()) {
+        const sections = pickRelevantSections(item.content, question);
+        if (sections.length) {
+          lines.push('Knowledge sections:');
+          for (const section of sections) {
+            lines.push(section.content);
+          }
+        }
+      }
+
       return lines.join('\n');
     })
     .join('\n\n');
@@ -137,7 +149,7 @@ router.post('/ask', async (req, res) => {
       return;
     }
 
-    const context = buildContext(items);
+    const context = buildContext(items, question.trim());
     const prompt = buildPrompt(question.trim(), context);
 
     logDaemon('info', `Asking Ollama: "${question.trim().slice(0, 60)}…"`);

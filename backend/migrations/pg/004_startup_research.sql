@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS research_founders (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id               UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   full_name             TEXT NOT NULL,
-  current_role          TEXT,
+  "current_role"        TEXT,
   linkedin_url          TEXT,
   twitter_url           TEXT,
   github_url            TEXT,
