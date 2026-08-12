@@ -13,6 +13,16 @@ const {
 const { completeStructured, LlmError, RESEARCH_ANALYSIS_MODEL } = require('../services/llm-client');
 const embedClient = require('../services/embed-client');
 const { logJob } = require('../utils/logger');
+const {
+  emptyToNull,
+  truncateText: truncate,
+  isLoginWalledUrl: isLoginWalled,
+  isBinaryOrDownloadUrl,
+  isSafeHttpUrl,
+  looksLikePersonName,
+  sanitizeFounderInput,
+  sanitizeProfileUrl,
+} = require('../services/research-guards');
 
 const YC_METADATA_SCHEMA = {
   type: 'object',
@@ -195,19 +205,6 @@ function clampScore(value) {
   return Math.max(1, Math.min(10, Math.round(n)));
 }
 
-function truncate(text, max = 12_000) {
-  if (!text) return '';
-  const cleaned = String(text).replace(/\s+/g, ' ').trim();
-  return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
-}
-
-function emptyToNull(value) {
-  if (value == null) return null;
-  const s = String(value).trim();
-  if (!s || /^unknown|n\/a|none|not (found|available)|null$/i.test(s)) return null;
-  return s;
-}
-
 function normalizeWebsite(url) {
   if (!url) return null;
   let websiteUrl = String(url).trim();
@@ -215,6 +212,7 @@ function normalizeWebsite(url) {
   if (!/^https?:\/\//i.test(websiteUrl)) {
     websiteUrl = `https://${websiteUrl}`;
   }
+  if (!isSafeHttpUrl(websiteUrl)) return null;
   return websiteUrl;
 }
 
@@ -237,10 +235,6 @@ function classifyPageType(url) {
   if (/security|trust/.test(path)) return 'security';
   if (!path || path === '/') return 'homepage';
   return 'page';
-}
-
-function isLoginWalled(url) {
-  return /linkedin\.com|twitter\.com|x\.com/i.test(url || '');
 }
 
 function absolutize(baseUrl, href) {
@@ -452,6 +446,8 @@ async function extractYcMetadata(userId, company, crawlText) {
 Only use facts present in the text. Use empty string for unknown strings, null for founded_year if unknown.
 yc_status examples: Active, Acquired, Public, Inactive — only if stated.
 Do not invent LinkedIn/Twitter URLs; leave empty string if not present.
+CRITICAL: founders must be real people (human full names). NEVER treat UI labels, download buttons, OS names, CTAs, nav items, or product names as founders (e.g. "Download for Windows", "Get started", "Docs").
+If no clear founder names appear, return an empty founders array.
 
 Known seed values:
 Name: ${company.name}
@@ -498,34 +494,37 @@ async function upsertFoundersFromMeta(userId, company, metaFounders = []) {
   const byName = new Map(existing.map((f) => [f.full_name.toLowerCase(), f]));
 
   for (const entry of metaFounders.slice(0, 10)) {
-    const fullName = emptyToNull(entry.full_name);
-    if (!fullName) continue;
+    const sanitized = sanitizeFounderInput({
+      full_name: entry.full_name,
+      role: entry.role,
+      linkedin_url: entry.linkedin_url,
+      twitter_url: entry.twitter_url,
+      github_url: entry.github_url,
+      personal_website: entry.personal_website,
+    });
+    if (!sanitized) {
+      logJob(`[research ${company.id}] skipped bogus founder candidate: ${entry.full_name || '(empty)'}`);
+      continue;
+    }
 
-    const key = fullName.toLowerCase();
+    const key = sanitized.full_name.toLowerCase();
     let founder = byName.get(key);
 
     if (!founder) {
-      founder = await researchDb.createFounder(userId, {
-        full_name: fullName,
-        current_role: emptyToNull(entry.role),
-        linkedin_url: emptyToNull(entry.linkedin_url),
-        twitter_url: emptyToNull(entry.twitter_url),
-        github_url: emptyToNull(entry.github_url),
-        personal_website: emptyToNull(entry.personal_website),
-      });
+      founder = await researchDb.createFounder(userId, sanitized);
       await researchDb.linkFounderToCompany(userId, company.id, founder.id, {
-        role: emptyToNull(entry.role),
+        role: sanitized.current_role,
         source_url: company.yc_url || company.website || company.source_url,
       });
       byName.set(key, founder);
     } else {
       const patch = {};
-      if (emptyToNull(entry.role) && !founder.current_role) patch.current_role = entry.role.trim();
-      if (emptyToNull(entry.linkedin_url) && !founder.linkedin_url) patch.linkedin_url = entry.linkedin_url.trim();
-      if (emptyToNull(entry.twitter_url) && !founder.twitter_url) patch.twitter_url = entry.twitter_url.trim();
-      if (emptyToNull(entry.github_url) && !founder.github_url) patch.github_url = entry.github_url.trim();
-      if (emptyToNull(entry.personal_website) && !founder.personal_website) {
-        patch.personal_website = entry.personal_website.trim();
+      if (sanitized.current_role && !founder.current_role) patch.current_role = sanitized.current_role;
+      if (sanitized.linkedin_url && !founder.linkedin_url) patch.linkedin_url = sanitized.linkedin_url;
+      if (sanitized.twitter_url && !founder.twitter_url) patch.twitter_url = sanitized.twitter_url;
+      if (sanitized.github_url && !founder.github_url) patch.github_url = sanitized.github_url;
+      if (sanitized.personal_website && !founder.personal_website) {
+        patch.personal_website = sanitized.personal_website;
       }
       if (Object.keys(patch).length) {
         founder = await researchDb.updateFounder(userId, founder.id, patch);
@@ -534,19 +533,30 @@ async function upsertFoundersFromMeta(userId, company, metaFounders = []) {
     }
   }
 
-  return researchDb.listFoundersForCompany(userId, company.id);
+  const founders = await researchDb.listFoundersForCompany(userId, company.id);
+  return founders.filter((f) => looksLikePersonName(f.full_name));
 }
 
 async function gatherFounderEvidence(userId, company, founder) {
+  if (!looksLikePersonName(founder.full_name)) {
+    logJob(`[research ${company.id}] skip enrichment for invalid founder name: ${founder.full_name}`);
+    return '';
+  }
+
   const chunks = [];
   const urls = [
-    { type: 'Personal website', url: founder.personal_website },
-    { type: 'GitHub', url: founder.github_url },
-    { type: 'LinkedIn', url: founder.linkedin_url },
-    { type: 'Twitter', url: founder.twitter_url },
+    { type: 'Personal website', url: sanitizeProfileUrl(founder.personal_website, { allowLoginWalled: false }) },
+    { type: 'GitHub', url: sanitizeProfileUrl(founder.github_url, { allowLoginWalled: false }) },
+    { type: 'LinkedIn', url: sanitizeProfileUrl(founder.linkedin_url, { allowLoginWalled: true }) },
+    { type: 'Twitter', url: sanitizeProfileUrl(founder.twitter_url, { allowLoginWalled: true }) },
   ].filter((e) => e.url);
 
   for (const entry of urls) {
+    if (isBinaryOrDownloadUrl(entry.url)) {
+      logJob(`[research ${company.id}] skip binary URL: ${entry.url}`);
+      continue;
+    }
+
     if (isLoginWalled(entry.url)) {
       await researchDb.addFounderSource(userId, {
         founder_id: founder.id,
@@ -568,20 +578,20 @@ async function gatherFounderEvidence(userId, company, founder) {
 
       if (hasFirecrawlKey()) {
         try {
-          const doc = await scrapeDocumentation(entry.url, { waitFor: 1500 });
+          const doc = await scrapeDocumentation(entry.url, { waitFor: 1500, timeout: 20_000 });
           title = doc.title || title;
-          text = doc.markdown || '';
+          text = truncate(doc.markdown || '', 6_000);
           summary = doc.description || text.slice(0, 300);
         } catch {
           const og = await fetchOgMetadata(entry.url);
           title = og.title || title;
-          text = og.text || '';
+          text = truncate(og.text || '', 4_000);
           summary = og.description || text.slice(0, 300);
         }
       } else {
         const og = await fetchOgMetadata(entry.url);
         title = og.title || title;
-        text = og.text || '';
+        text = truncate(og.text || '', 4_000);
         summary = og.description || text.slice(0, 300);
       }
 
@@ -591,42 +601,43 @@ async function gatherFounderEvidence(userId, company, founder) {
         source_type: entry.type,
         source_title: title,
         source_url: entry.url,
-        raw_text: text ? text.slice(0, 12_000) : null,
+        raw_text: text || null,
         extracted_summary: summary,
         credibility_score: 7,
       });
 
       if (text) {
-        chunks.push(`${entry.type} (${entry.url}):\n${truncate(text, 2500)}`);
+        chunks.push(`${entry.type} (${entry.url}):\n${truncate(text, 2000)}`);
       }
     } catch (error) {
       logJob(`[research ${company.id}] founder source ${entry.url}: ${error.message}`);
     }
   }
 
-  if (hasFirecrawlKey()) {
+  if (hasFirecrawlKey() && looksLikePersonName(founder.full_name)) {
     try {
-      const query = `"${founder.full_name}" ${company.name} founder OR co-founder`;
+      // Snippets only — avoid scraping full pages into memory during search.
+      const query = `"${founder.full_name}" "${company.name}" founder OR co-founder`;
       const { hits } = await searchWeb(query, {
-        limit: Math.min(config.RESEARCH_MAX_SEARCH_RESULTS || 5, 4),
-        scrape: true,
+        limit: Math.min(config.RESEARCH_MAX_SEARCH_RESULTS || 5, 3),
+        scrape: false,
       });
 
       for (const hit of hits.slice(0, 3)) {
-        if (isLoginWalled(hit.url)) continue;
-        const text = hit.markdown || hit.description || '';
+        if (!hit.url || isLoginWalled(hit.url) || isBinaryOrDownloadUrl(hit.url)) continue;
+        const text = truncate(hit.description || '', 800);
         await researchDb.addFounderSource(userId, {
           founder_id: founder.id,
           company_id: company.id,
           source_type: 'web_search',
           source_title: hit.title || hit.url,
           source_url: hit.url,
-          raw_text: text ? text.slice(0, 8000) : null,
-          extracted_summary: (hit.description || text).slice(0, 300) || null,
+          raw_text: text || null,
+          extracted_summary: text || null,
           credibility_score: 5,
         });
         if (text) {
-          chunks.push(`Search hit (${hit.url}):\n${truncate(text, 2000)}`);
+          chunks.push(`Search hit (${hit.url}):\n${text}`);
         }
       }
     } catch (error) {
@@ -639,8 +650,9 @@ async function gatherFounderEvidence(userId, company, founder) {
 
 async function enrichFoundersDeep(userId, company, founders) {
   let enriched = 0;
+  const validFounders = (founders || []).filter((f) => looksLikePersonName(f.full_name));
 
-  for (const founder of founders) {
+  for (const founder of validFounders) {
     const evidence = await gatherFounderEvidence(userId, company, founder);
     if (!evidence.trim()) {
       enriched += 1;
@@ -658,24 +670,33 @@ async function enrichFoundersDeep(userId, company, founders) {
 Only use facts supported by the evidence. Use empty string when unknown.
 Do NOT invent LinkedIn/Twitter/GitHub URLs — only fill if explicitly present.
 Prefer concise factual phrases over marketing language.
+Never set github_url / personal_website to installer or binary download links.
 
 Founder: ${founder.full_name}
 Company: ${company.name}
 Role: ${founder.company_role || founder.current_role || ''}
 
 Evidence:
-${truncate(evidence, 12_000)}`,
+${truncate(evidence, 8_000)}`,
       });
 
       const patch = {};
       for (const key of [
         'education', 'previous_companies', 'previous_startups', 'technical_background',
         'domain_expertise', 'achievements', 'public_bio', 'location',
-        'linkedin_url', 'twitter_url', 'github_url', 'personal_website',
       ]) {
         const value = emptyToNull(profile[key]);
         if (value && !founder[key]) patch[key] = value;
       }
+
+      const linkedin = sanitizeProfileUrl(profile.linkedin_url, { allowLoginWalled: true });
+      const twitter = sanitizeProfileUrl(profile.twitter_url, { allowLoginWalled: true });
+      const github = sanitizeProfileUrl(profile.github_url, { allowLoginWalled: false });
+      const website = sanitizeProfileUrl(profile.personal_website, { allowLoginWalled: false });
+      if (linkedin && !founder.linkedin_url) patch.linkedin_url = linkedin;
+      if (twitter && !founder.twitter_url) patch.twitter_url = twitter;
+      if (github && !founder.github_url) patch.github_url = github;
+      if (website && !founder.personal_website) patch.personal_website = website;
 
       if (Object.keys(patch).length) {
         await researchDb.updateFounder(userId, founder.id, patch);
@@ -706,12 +727,23 @@ async function researchFunding(userId, company, crawlText) {
       try {
         const { hits } = await searchWeb(query, {
           limit: config.RESEARCH_MAX_SEARCH_RESULTS || 5,
-          scrape: true,
+          scrape: false,
           sources: ['web', 'news'],
         });
 
         for (const hit of hits.slice(0, 4)) {
-          const text = hit.markdown || hit.description || '';
+          if (!hit.url || isBinaryOrDownloadUrl(hit.url)) continue;
+          let text = truncate(hit.description || '', 1200);
+
+          // Optionally fetch one page of markdown for stronger evidence, with hard caps.
+          if (hasFirecrawlKey() && evidenceChunks.length < 4) {
+            try {
+              const doc = await scrapeDocumentation(hit.url, { waitFor: 1000, timeout: 20_000 });
+              text = truncate(doc.markdown || text, 2500);
+            } catch {
+              // keep snippet
+            }
+          }
           await researchDb.addSource(userId, {
             company_id: company.id,
             source_type: 'funding_search',

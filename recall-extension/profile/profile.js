@@ -1,4 +1,5 @@
 import { fetchProfile, health } from '../shared/api.js';
+import { mountAppShell } from '../shared/app-shell.js';
 import { requireAuth } from '../shared/auth-gate.js';
 import { mountIdentityTab } from './sections/identity.js';
 import { mountProjectsTab } from './sections/projects.js';
@@ -113,16 +114,6 @@ function bindNavigation() {
   document.querySelectorAll('.subnav-btn').forEach((button) => {
     button.addEventListener('click', () => setActiveTab(button.dataset.tab));
   });
-
-  $('#back-link').addEventListener('click', (event) => {
-    event.preventDefault();
-    window.close();
-  });
-
-  $('#settings-link').addEventListener('click', (event) => {
-    event.preventDefault();
-    chrome.runtime.openOptionsPage();
-  });
 }
 
 function mountTabs() {
@@ -136,6 +127,8 @@ function mountTabs() {
 }
 
 async function init() {
+  mountAppShell({ active: 'profile' });
+
   if (!(await requireAuth())) {
     return;
   }

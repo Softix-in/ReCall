@@ -6,152 +6,248 @@
     <title>Recall Settings</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+    <link rel="stylesheet" href="../shared/app-shell.css" />
     <link rel="stylesheet" href="settings.css" />
   </head>
   <body>
-    <main class="page">
-      <header class="settings-header">
-        <img class="brand-logo" src="../icons/logo.svg" width="36" height="36" alt="" />
-        <div>
-          <h1>Recall Settings</h1>
-          <p>Stored locally in <code>~/.recall/settings.json</code></p>
-        </div>
-      </header>
+    <div class="app-shell">
+      <aside id="app-sidebar-root"></aside>
 
-      <form id="settings-form">
-        <label>
-          Whisper model size
-          <select id="whisperModel">
-            <option value="tiny">Tiny (fastest)</option>
-            <option value="small">Small (default)</option>
-            <option value="medium">Medium (best quality)</option>
-          </select>
-        </label>
-
-        <label>
-          Default save mode
-          <select id="defaultSaveMode">
-            <option value="auto_scrape">Auto-scrape</option>
-            <option value="manual_note">Write a note</option>
-          </select>
-        </label>
-
-        <label>
-          Max transcript length (characters)
-          <input type="number" id="maxTranscriptLength" min="1000" max="500000" step="1000" />
-        </label>
-
-        <label>
-          Backup folder path
-          <input type="text" id="backupDir" />
-        </label>
-
-        <label class="checkbox">
-          <input type="checkbox" id="backupEnabled" />
-          Enable nightly backups
-        </label>
-
-        <label>
-          Backup retention (days)
-          <input type="number" id="backupRetentionDays" min="1" max="30" />
-        </label>
-
-        <fieldset id="account-security" hidden>
-          <legend>Account security</legend>
-          <p class="hint" id="verification-status"></p>
-          <div class="actions">
-            <button type="button" id="resend-verification-btn" class="btn-secondary" hidden>Resend verification email</button>
+      <main class="settings-main app-main">
+        <header class="settings-header">
+          <div>
+            <h1>Settings</h1>
+            <p>Account, AI models, backend connection, backups, and shortcuts.</p>
           </div>
+          <span id="status" class="status-toast"></span>
+        </header>
 
-          <label>
-            Current password
-            <input type="password" id="current-password" autocomplete="current-password" />
-          </label>
-          <label>
-            New password
-            <input type="password" id="new-password" autocomplete="new-password" minlength="8" />
-          </label>
-          <div class="actions">
-            <button type="button" id="change-password-btn" class="btn-secondary">Change password</button>
-            <span id="password-status" class="status"></span>
+        <form id="settings-form">
+          <!-- ── Account ─────────────────────────────────────────────── -->
+          <section class="settings-section" id="section-account" aria-labelledby="heading-account">
+            <h2 class="section-heading" id="heading-account">Account</h2>
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <h3>Signed-in account</h3>
+                <span id="account-status-pill" class="status-pill">Not signed in</span>
+              </div>
+              <p class="hint" id="account-email">Not signed in</p>
+              <div class="actions">
+                <button type="button" id="sign-out-btn" class="btn-secondary" hidden>Sign out</button>
+                <button type="button" id="open-login-btn" class="btn-secondary">Sign in</button>
+              </div>
+            </div>
+
+            <div class="panel-card" id="account-security" hidden>
+              <div class="panel-card-header">
+                <h3>Account security</h3>
+              </div>
+
+              <div class="field-block">
+                <p class="hint" id="verification-status"></p>
+                <div class="actions">
+                  <button type="button" id="resend-verification-btn" class="btn-secondary" hidden>Resend verification email</button>
+                </div>
+              </div>
+
+              <div class="divider"></div>
+
+              <div class="field-grid two-col">
+                <label class="field">
+                  <span class="field-label">Current password</span>
+                  <input type="password" id="current-password" autocomplete="current-password" />
+                </label>
+                <label class="field">
+                  <span class="field-label">New password</span>
+                  <input type="password" id="new-password" autocomplete="new-password" minlength="8" />
+                </label>
+              </div>
+              <div class="actions">
+                <button type="button" id="change-password-btn" class="btn-secondary">Change password</button>
+                <span id="password-status" class="status"></span>
+              </div>
+
+              <div class="divider"></div>
+
+              <label class="field">
+                <span class="field-label">New email</span>
+                <input type="email" id="new-email" autocomplete="email" />
+              </label>
+              <p class="hint" id="pending-email-hint" hidden></p>
+              <div class="actions">
+                <button type="button" id="change-email-btn" class="btn-secondary">Change email</button>
+                <span id="email-status" class="status"></span>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── AI & Models ─────────────────────────────────────────── -->
+          <section class="settings-section" id="section-ai" aria-labelledby="heading-ai">
+            <h2 class="section-heading" id="heading-ai">AI &amp; Models</h2>
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <h3>Identity &amp; Career AI</h3>
+              </div>
+              <p class="hint">
+                Models run on <a href="https://fireworks.ai/models" target="_blank" rel="noreferrer">Fireworks serverless</a>
+                via the OpenAI-compatible chat API. <strong>Quality</strong> handles JD/resume/research,
+                <strong>Chat</strong> powers the profile assistant with tool calling, and <strong>Reasoning</strong>
+                is used for deep analysis. Your API key is stored encrypted on the backend.
+              </p>
+
+              <label class="field">
+                <span class="field-label">Fireworks API key</span>
+                <input type="password" id="fireworksApiKey" autocomplete="off" placeholder="fw_..." />
+              </label>
+
+              <div class="divider"></div>
+
+              <div class="model-row">
+                <label class="field">
+                  <span class="field-label">Quality model</span>
+                  <select id="aiQualityModel"></select>
+                </label>
+                <label class="field" id="aiQualityModelCustomWrap" hidden>
+                  <span class="field-label">Custom quality model ID</span>
+                  <input type="text" id="aiQualityModelCustom" placeholder="accounts/fireworks/models/..." autocomplete="off" />
+                </label>
+              </div>
+
+              <div class="model-row">
+                <label class="field">
+                  <span class="field-label">Chat model</span>
+                  <select id="aiChatModel"></select>
+                </label>
+                <label class="field" id="aiChatModelCustomWrap" hidden>
+                  <span class="field-label">Custom chat model ID</span>
+                  <input type="text" id="aiChatModelCustom" placeholder="accounts/fireworks/models/..." autocomplete="off" />
+                </label>
+              </div>
+
+              <div class="model-row">
+                <label class="field">
+                  <span class="field-label">Reasoning model</span>
+                  <select id="aiReasoningModel"></select>
+                </label>
+                <label class="field" id="aiReasoningModelCustomWrap" hidden>
+                  <span class="field-label">Custom reasoning model ID</span>
+                  <input type="text" id="aiReasoningModelCustom" placeholder="accounts/fireworks/models/..." autocomplete="off" />
+                </label>
+              </div>
+
+              <label class="checkbox-row">
+                <input type="checkbox" id="aiDeepAnalysis" />
+                Deep analysis (use reasoning model)
+              </label>
+
+              <div class="actions">
+                <button type="button" id="saveAiSettings" class="btn-primary">Save AI settings</button>
+                <button type="button" id="testFireworksKey" class="btn-secondary">Test API key</button>
+                <span id="aiStatus" class="status"></span>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Backend & Capture ───────────────────────────────────── -->
+          <section class="settings-section" id="section-connection" aria-labelledby="heading-connection">
+            <h2 class="section-heading" id="heading-connection">Backend &amp; Capture</h2>
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <h3>Backend connection</h3>
+              </div>
+              <p class="hint">Pre-configured from <code>shared/defaults.js</code> on install. Override here only if needed.</p>
+
+              <label class="field">
+                <span class="field-label">Backend URL</span>
+                <input type="url" id="backendUrl" placeholder="http://40.81.245.21:7878" />
+              </label>
+            </div>
+
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <h3>Capture behavior</h3>
+              </div>
+
+              <div class="field-grid two-col">
+                <label class="field">
+                  <span class="field-label">Whisper model size</span>
+                  <select id="whisperModel">
+                    <option value="tiny">Tiny (fastest)</option>
+                    <option value="small">Small (default)</option>
+                    <option value="medium">Medium (best quality)</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span class="field-label">Default save mode</span>
+                  <select id="defaultSaveMode">
+                    <option value="auto_scrape">Auto-scrape</option>
+                    <option value="manual_note">Write a note</option>
+                  </select>
+                </label>
+              </div>
+
+              <label class="field">
+                <span class="field-label">Max transcript length (characters)</span>
+                <input type="number" id="maxTranscriptLength" min="1000" max="500000" step="1000" />
+              </label>
+            </div>
+          </section>
+
+          <!-- ── Backups ──────────────────────────────────────────────── -->
+          <section class="settings-section" id="section-backups" aria-labelledby="heading-backups">
+            <h2 class="section-heading" id="heading-backups">Backups</h2>
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <h3>Nightly backups</h3>
+              </div>
+
+              <label class="checkbox-row">
+                <input type="checkbox" id="backupEnabled" />
+                Enable nightly backups
+              </label>
+
+              <div class="field-grid two-col">
+                <label class="field">
+                  <span class="field-label">Backup folder path</span>
+                  <input type="text" id="backupDir" />
+                </label>
+                <label class="field">
+                  <span class="field-label">Retention (days)</span>
+                  <input type="number" id="backupRetentionDays" min="1" max="30" />
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Shortcuts ────────────────────────────────────────────── -->
+          <section class="settings-section" id="section-shortcuts" aria-labelledby="heading-shortcuts">
+            <h2 class="section-heading" id="heading-shortcuts">Shortcuts</h2>
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <h3>Keyboard shortcuts</h3>
+              </div>
+              <p class="hint">Configured in <code>chrome://extensions/shortcuts</code></p>
+
+              <div class="shortcut-list">
+                <div class="shortcut-row">
+                  <span>Quick save</span>
+                  <kbd>Ctrl+Shift+S</kbd>
+                </div>
+                <div class="shortcut-row">
+                  <span>Open search</span>
+                  <kbd>Ctrl+Shift+F</kbd>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div class="save-bar">
+            <button type="submit" class="btn-primary">Save settings</button>
           </div>
-
-          <label>
-            New email
-            <input type="email" id="new-email" autocomplete="email" />
-          </label>
-          <p class="hint" id="pending-email-hint" hidden></p>
-          <div class="actions">
-            <button type="button" id="change-email-btn" class="btn-secondary">Change email</button>
-            <span id="email-status" class="status"></span>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Account</legend>
-          <p class="hint" id="account-email">Not signed in</p>
-          <div class="actions">
-            <button type="button" id="sign-out-btn" class="btn-secondary" hidden>Sign out</button>
-            <button type="button" id="open-login-btn" class="btn-secondary">Sign in</button>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Backend connection</legend>
-          <p class="hint">Pre-configured from <code>shared/defaults.js</code> on install. Override here only if needed.</p>
-
-          <label>
-            Backend URL
-            <input type="url" id="backendUrl" placeholder="http://127.0.0.1:7878" />
-          </label>
-        </fieldset>
-
-        <fieldset>
-          <legend>Identity &amp; Career AI</legend>
-          <p class="hint">Fireworks API key powers JD analysis, resume tailoring, YC research (Minimax M3), and the profile chat assistant. Stored encrypted on the backend.</p>
-
-          <label>
-            Fireworks API key
-            <input type="password" id="fireworksApiKey" autocomplete="off" placeholder="fw_..." />
-          </label>
-
-          <label>
-            Quality model
-            <input type="text" id="aiQualityModel" placeholder="accounts/fireworks/models/minimax-m3" />
-          </label>
-
-          <label>
-            Chat model
-            <input type="text" id="aiChatModel" readonly />
-          </label>
-
-          <label class="checkbox">
-            <input type="checkbox" id="aiDeepAnalysis" />
-            Deep analysis (glm-5p2 reasoning)
-          </label>
-
-          <div class="actions">
-            <button type="button" id="saveAiSettings" class="btn-secondary">Save AI settings</button>
-            <button type="button" id="testFireworksKey" class="btn-secondary">Test API key</button>
-            <span id="aiStatus" class="status"></span>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Keyboard shortcuts</legend>
-          <p class="hint">Configured in <code>chrome://extensions/shortcuts</code></p>
-          <ul>
-            <li><strong>Quick save:</strong> Ctrl+Shift+S (Cmd+Shift+S on Mac)</li>
-            <li><strong>Open search:</strong> Ctrl+Shift+F (Cmd+Shift+F on Mac)</li>
-          </ul>
-        </fieldset>
-
-        <div class="actions">
-          <button type="submit" class="btn-primary">Save settings</button>
-          <span id="status" class="status"></span>
-        </div>
-      </form>
-    </main>
+        </form>
+      </main>
+    </div>
 
     <script type="module" src="settings.js"></script>
   </body>

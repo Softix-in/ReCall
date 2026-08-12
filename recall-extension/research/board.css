@@ -34,16 +34,6 @@ body {
 
 .hero { margin-bottom: 28px; }
 
-.hero-top { margin-bottom: 16px; }
-
-.back-link {
-  color: var(--muted);
-  text-decoration: none;
-  font-size: 13px;
-}
-
-.back-link:hover { color: var(--text); }
-
 .hero-brand {
   display: flex;
   align-items: center;

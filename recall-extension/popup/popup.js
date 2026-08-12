@@ -763,20 +763,13 @@ function bindEvents() {
     button.addEventListener('click', () => setActiveTab(button.dataset.tab));
   });
 
-  $('#open-search').addEventListener('click', (event) => {
+  function openHomePage(event) {
     event.preventDefault();
-    chrome.tabs.create({ url: chrome.runtime.getURL('search/search.html') });
-  });
+    chrome.tabs.create({ url: chrome.runtime.getURL('home/home.html') });
+  }
 
-  $('#open-research').addEventListener('click', (event) => {
-    event.preventDefault();
-    chrome.tabs.create({ url: chrome.runtime.getURL('research/board.html') });
-  });
-
-  $('#open-profile').addEventListener('click', (event) => {
-    event.preventDefault();
-    chrome.tabs.create({ url: chrome.runtime.getURL('profile/profile.html') });
-  });
+  $('#open-home').addEventListener('click', openHomePage);
+  $('#open-home-brand').addEventListener('click', openHomePage);
 
   $('#settings-link').addEventListener('click', (event) => {
     event.preventDefault();

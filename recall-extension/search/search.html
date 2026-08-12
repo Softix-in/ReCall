@@ -6,10 +6,14 @@
     <title>Recall Search</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+    <link rel="stylesheet" href="../shared/app-shell.css" />
     <link rel="stylesheet" href="search.css" />
   </head>
   <body>
-    <main class="page">
+    <div class="app-shell">
+      <aside id="app-sidebar-root"></aside>
+
+      <main class="page app-main">
       <header class="hero">
         <div class="hero-brand">
           <img class="brand-logo" src="../icons/logo.svg" width="40" height="40" alt="" />
@@ -111,6 +115,7 @@
       </footer>
 
     </main>
+    </div>
 
     <script type="module" src="search.js"></script>
   </body>

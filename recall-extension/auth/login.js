@@ -135,7 +135,7 @@ $('auth-form').addEventListener('submit', async (event) => {
     }
 
     await login(email, password);
-    window.location.replace(chrome.runtime.getURL('popup/popup.html'));
+    window.location.replace(chrome.runtime.getURL('home/home.html'));
   } catch (error) {
     showError(error.message || 'Authentication failed');
   } finally {
@@ -145,7 +145,7 @@ $('auth-form').addEventListener('submit', async (event) => {
 });
 
 async function init() {
-  if (await redirectIfAuthenticated('popup/popup.html')) {
+  if (await redirectIfAuthenticated('home/home.html')) {
     return;
   }
 

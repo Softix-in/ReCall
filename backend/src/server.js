@@ -94,9 +94,38 @@ async function resumeStuckResearchJobs(activeQueue) {
     return;
   }
 
-  logDaemon('info', `Resuming ${stuck.length} research job(s) from previous session`);
+  const now = Date.now();
+  const MAX_RESUME_AGE_MS = 20 * 60 * 1000;
+  let resumed = 0;
 
   for (const job of stuck) {
+    const ageMs = now - Number(job.started_at || job.created_at || now);
+    const retries = Number(job.retry_count || 0);
+    const tooOld = ageMs > MAX_RESUME_AGE_MS;
+    const tooManyRetries = retries >= 2;
+
+    if (tooOld || tooManyRetries) {
+      logDaemon(
+        'warn',
+        `Abandoning stuck research job ${job.id} (age=${Math.round(ageMs / 1000)}s retries=${retries})`,
+      );
+      await researchDb.updateJob(job.user_id, job.id, {
+        status: 'failed',
+        error_message: tooManyRetries
+          ? 'Abandoned after repeated failures (possible crash loop)'
+          : 'Abandoned: research job exceeded max runtime before resume',
+        completed_at: now,
+        progress: {
+          ...(job.progress || {}),
+          step: 'abandoned',
+        },
+      });
+      await researchDb.updateCompany(job.user_id, job.company_id, {
+        status: 'needs_review',
+      });
+      continue;
+    }
+
     if (job.status === 'running') {
       await researchDb.updateJob(job.user_id, job.id, { status: 'queued' });
     }
@@ -107,9 +136,14 @@ async function resumeStuckResearchJobs(activeQueue) {
         companyId: job.company_id,
         userId: job.user_id,
       });
+      resumed += 1;
     } catch (error) {
       logDaemon('error', `Failed to resume research job ${job.id}`, error);
     }
+  }
+
+  if (resumed > 0) {
+    logDaemon('info', `Resuming ${resumed} research job(s) from previous session`);
   }
 }
 

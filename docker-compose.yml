@@ -50,6 +50,7 @@ services:
       RECALL_HOME: /data/recall
       HOST: 0.0.0.0
       PORT: 7878
+      NODE_OPTIONS: --max-old-space-size=1024
       DATABASE_URL: postgresql://recall:recall@postgres:5432/recall
       EMBED_HOST: embed
       EMBED_PORT: 7879

@@ -1,5 +1,6 @@
 const researchDb = require('../db/research');
 const itemsDb = require('../db/items');
+const { sanitizeFounderInput } = require('./research-guards');
 
 function normalizeTags(tags) {
   if (!tags) return [];
@@ -20,15 +21,8 @@ function normalizeFounders(founders) {
   if (!Array.isArray(founders)) return [];
 
   return founders
-    .map((f) => ({
-      full_name: String(f.full_name || f.name || '').trim(),
-      current_role: f.current_role || f.role || null,
-      linkedin_url: f.linkedin_url || null,
-      twitter_url: f.twitter_url || null,
-      github_url: f.github_url || null,
-      personal_website: f.personal_website || null,
-    }))
-    .filter((f) => f.full_name)
+    .map((f) => sanitizeFounderInput(f))
+    .filter(Boolean)
     .slice(0, 10);
 }
 
@@ -204,7 +198,7 @@ async function startResearch(userId, body, researchQueue) {
     linked_item_id: company.item_id || item?.id || null,
     status: job.status,
     founders_count: payload.founders.length,
-    analysis_model: 'accounts/fireworks/models/minimax-m3',
+    analysis_model: 'accounts/fireworks/models/deepseek-v4-flash-0731',
   };
 }
 

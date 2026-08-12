@@ -1,5 +1,9 @@
 const { Firecrawl } = require('@mendable/firecrawl-js');
 const config = require('../config');
+const {
+  isBinaryOrDownloadUrl,
+  MAX_SCRAPE_MARKDOWN_CHARS,
+} = require('../services/research-guards');
 
 class FirecrawlError extends Error {
   constructor(message, { status = 503, code = 'firecrawl_unavailable' } = {}) {
@@ -27,7 +31,11 @@ function getClient() {
 
 function parseDocument(doc, fallbackUrl) {
   const metadata = doc?.metadata || {};
-  const markdown = doc?.markdown || '';
+  let markdown = doc?.markdown || '';
+
+  if (markdown.length > MAX_SCRAPE_MARKDOWN_CHARS) {
+    markdown = `${markdown.slice(0, MAX_SCRAPE_MARKDOWN_CHARS)}\n\n…[truncated]`;
+  }
 
   return {
     url: metadata.sourceURL || metadata.url || fallbackUrl,
@@ -40,22 +48,42 @@ function parseDocument(doc, fallbackUrl) {
 
 function normalizeSearchHits(result) {
   const buckets = [];
-  if (Array.isArray(result?.web)) buckets.push(...result.web);
-  if (Array.isArray(result?.news)) buckets.push(...result.news);
-  if (Array.isArray(result?.data?.web)) buckets.push(...result.data.web);
-  if (Array.isArray(result?.data?.news)) buckets.push(...result.data.news);
-  if (Array.isArray(result?.data) && !result?.web) buckets.push(...result.data);
+
+  // Firecrawl v2 SearchData exposes .web / .news getters. Accessing .data throws
+  // ("SearchData has no '.data'"), so never touch .data on the SDK object.
+  try {
+    if (Array.isArray(result?.web)) buckets.push(...result.web);
+  } catch {
+    // ignore accessor errors
+  }
+  try {
+    if (Array.isArray(result?.news)) buckets.push(...result.news);
+  } catch {
+    // ignore accessor errors
+  }
+
+  // Plain JSON / older shapes only
+  if (result && typeof result === 'object' && Object.prototype.hasOwnProperty.call(result, 'data')) {
+    const data = result.data;
+    if (Array.isArray(data?.web)) buckets.push(...data.web);
+    if (Array.isArray(data?.news)) buckets.push(...data.news);
+    if (Array.isArray(data) && buckets.length === 0) buckets.push(...data);
+  }
 
   return buckets
     .map((hit) => {
       if (!hit || typeof hit !== 'object') return null;
       const url = hit.url || hit.metadata?.sourceURL || hit.metadata?.url || null;
-      if (!url) return null;
+      if (!url || isBinaryOrDownloadUrl(url)) return null;
+      let markdown = hit.markdown || null;
+      if (markdown && markdown.length > MAX_SCRAPE_MARKDOWN_CHARS) {
+        markdown = `${markdown.slice(0, MAX_SCRAPE_MARKDOWN_CHARS)}\n\n…[truncated]`;
+      }
       return {
         url,
         title: hit.title || hit.metadata?.title || null,
         description: hit.description || hit.snippet || hit.metadata?.description || null,
-        markdown: hit.markdown || null,
+        markdown,
         publisher: hit.publisher || hit.source || null,
       };
     })
@@ -63,13 +91,20 @@ function normalizeSearchHits(result) {
 }
 
 async function scrapeDocumentation(url, options = {}) {
+  if (isBinaryOrDownloadUrl(url)) {
+    throw new FirecrawlError(`Refusing to scrape binary/download URL: ${url}`, {
+      status: 400,
+      code: 'unsafe_url',
+    });
+  }
+
   const client = getClient();
 
   const doc = await client.scrape(url, {
     formats: ['markdown'],
     onlyMainContent: true,
     waitFor: options.waitFor ?? 2000,
-    timeout: options.timeout ?? 45_000,
+    timeout: options.timeout ?? 30_000,
   });
 
   const parsed = parseDocument(doc, url);
@@ -173,6 +208,7 @@ async function researchSitePages(seedUrl, {
 
   for (const url of prioritized) {
     if (pages.length >= limit) break;
+    if (isBinaryOrDownloadUrl(url)) continue;
     try {
       const doc = await scrapeDocumentation(url, { waitFor: 1500 });
       pushPage(doc);

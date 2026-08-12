@@ -2,16 +2,30 @@ import { BUILTIN_BACKEND_URL } from './defaults.js';
 
 const LOCAL_API_BASE = 'http://127.0.0.1:7878';
 const STORAGE_KEY_BACKEND_URL = 'recallBackendUrl';
+const HOSTED_BACKEND_URL = (BUILTIN_BACKEND_URL || '').replace(/\/$/, '');
 
-export const API_BASE = BUILTIN_BACKEND_URL || LOCAL_API_BASE;
+export const API_BASE = HOSTED_BACKEND_URL || LOCAL_API_BASE;
+
+function isLocalBackendUrl(url) {
+  if (!url) return true;
+  try {
+    const host = new URL(url).hostname;
+    return host === '127.0.0.1' || host === 'localhost';
+  } catch {
+    return /^(https?:\/\/)?(127\.0\.0\.1|localhost)(:|\/|$)/i.test(url);
+  }
+}
 
 export function resolveBackendUrl(storedUrl) {
-  if (storedUrl) {
-    return storedUrl.replace(/\/$/, '');
+  const cleaned = storedUrl ? storedUrl.replace(/\/$/, '') : '';
+
+  // Prefer hosted builtin over a stale local URL left in chrome.storage.
+  if (HOSTED_BACKEND_URL && (!cleaned || isLocalBackendUrl(cleaned))) {
+    return HOSTED_BACKEND_URL;
   }
 
-  if (BUILTIN_BACKEND_URL) {
-    return BUILTIN_BACKEND_URL.replace(/\/$/, '');
+  if (cleaned) {
+    return cleaned;
   }
 
   return LOCAL_API_BASE;
@@ -35,22 +49,22 @@ export async function ensureDefaultConnection() {
     return;
   }
 
-  const stored = await chrome.storage.local.get([
-    STORAGE_KEY_BACKEND_URL,
-    'recallDefaultsSeeded',
-  ]);
-
-  if (stored.recallDefaultsSeeded) {
+  if (!HOSTED_BACKEND_URL) {
     return;
   }
 
-  const payload = { recallDefaultsSeeded: true };
+  const stored = await chrome.storage.local.get([STORAGE_KEY_BACKEND_URL]);
+  const current = stored[STORAGE_KEY_BACKEND_URL]
+    ? String(stored[STORAGE_KEY_BACKEND_URL]).replace(/\/$/, '')
+    : '';
 
-  if (!stored[STORAGE_KEY_BACKEND_URL] && BUILTIN_BACKEND_URL) {
-    payload[STORAGE_KEY_BACKEND_URL] = BUILTIN_BACKEND_URL.replace(/\/$/, '');
+  // Seed hosted URL, and migrate any leftover local backend URL.
+  if (!current || isLocalBackendUrl(current)) {
+    await chrome.storage.local.set({
+      [STORAGE_KEY_BACKEND_URL]: HOSTED_BACKEND_URL,
+      recallDefaultsSeeded: true,
+    });
   }
-
-  await chrome.storage.local.set(payload);
 }
 
 export async function saveExtensionConfig({ backendUrl }) {

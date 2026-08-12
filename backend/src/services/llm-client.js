@@ -3,10 +3,10 @@ const config = require('../config');
 const profileDb = require('../db/profile');
 
 const FIREWORKS_BASE_URL = 'https://api.fireworks.ai/inference/v1';
-const DEFAULT_QUALITY_MODEL = 'accounts/fireworks/models/minimax-m3';
-const DEFAULT_CHAT_MODEL = 'accounts/fireworks/models/kimi-k2-instruct-0905';
-const DEFAULT_REASONING_MODEL = 'accounts/fireworks/models/glm-5p2';
-const RESEARCH_ANALYSIS_MODEL = 'accounts/fireworks/models/minimax-m3';
+const DEFAULT_QUALITY_MODEL = 'accounts/fireworks/models/deepseek-v4-flash-0731';
+const DEFAULT_CHAT_MODEL = 'accounts/fireworks/models/kimi-k2p6';
+const DEFAULT_REASONING_MODEL = 'accounts/fireworks/models/deepseek-v4-flash-0731';
+const RESEARCH_ANALYSIS_MODEL = 'accounts/fireworks/models/deepseek-v4-flash-0731';
 
 class LlmError extends Error {
   constructor(message, { code, status } = {}) {
@@ -60,10 +60,11 @@ function mapClientError(error) {
     });
   }
 
-  if (status === 404 && (providerCode === 'NOT_FOUND' || message.includes('inaccessible'))) {
-    return new LlmError('Invalid Fireworks API key', {
-      code: 'invalid_api_key',
-      status: 401,
+  // Model ID missing / not deployed — do NOT mislabel as a bad API key.
+  if (status === 404 && (providerCode === 'NOT_FOUND' || /inaccessible|not found|not deployed/i.test(message))) {
+    return new LlmError(message || 'Fireworks model not found or not deployed', {
+      code: 'model_not_found',
+      status: 404,
     });
   }
 

@@ -52,7 +52,7 @@ export async function requireAuth({ allowUnverified = false } = {}) {
   return true;
 }
 
-export async function redirectIfAuthenticated(target = 'popup/popup.html') {
+export async function redirectIfAuthenticated(target = 'home/home.html') {
   if (!(await isAuthenticated())) {
     return false;
   }

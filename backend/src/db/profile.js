@@ -37,9 +37,9 @@ const PROJECT_UPDATABLE = new Set([
   'sort_order',
 ]);
 
-const DEFAULT_AI_QUALITY_MODEL = 'accounts/fireworks/models/minimax-m3';
-const DEFAULT_AI_CHAT_MODEL = 'accounts/fireworks/models/kimi-k2-instruct-0905';
-const DEFAULT_AI_REASONING_MODEL = 'accounts/fireworks/models/glm-5p2';
+const DEFAULT_AI_QUALITY_MODEL = 'accounts/fireworks/models/deepseek-v4-flash-0731';
+const DEFAULT_AI_CHAT_MODEL = 'accounts/fireworks/models/kimi-k2p6';
+const DEFAULT_AI_REASONING_MODEL = 'accounts/fireworks/models/deepseek-v4-flash-0731';
 
 function rowToProfile(row, { includeSecrets = false } = {}) {
   if (!row) {

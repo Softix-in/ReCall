@@ -409,17 +409,30 @@ async function checkDaemonHealth() {
 }
 
 async function getFooterStatus() {
+  const healthResult = await checkDaemonHealth();
+
+  if (!healthResult.online) {
+    return { online: false, itemCount: 0, storageBytes: 0, queueLength: 0 };
+  }
+
   try {
-    const [healthResult, status] = await Promise.all([checkDaemonHealth(), getStatus()]);
+    const status = await getStatus();
     return {
-      online: healthResult.online,
+      online: true,
       itemCount: status.itemCount,
       storageBytes: status.storageBytes,
       queueLength: status.queueLength,
       version: healthResult.version,
     };
   } catch {
-    return { online: false, itemCount: 0, storageBytes: 0, queueLength: 0 };
+    // Backend is up; /status requires auth so unsigned users still show online.
+    return {
+      online: true,
+      itemCount: 0,
+      storageBytes: 0,
+      queueLength: 0,
+      version: healthResult.version,
+    };
   }
 }
 

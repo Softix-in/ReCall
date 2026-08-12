@@ -1,60 +1,62 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Recall — YC Research Board</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
-    <link rel="stylesheet" href="board.css" />
-  </head>
-  <body>
-    <main class="page">
-      <header class="hero">
-        <div class="hero-top">
-          <a href="#" class="back-link" id="back-link">← Back to Recall</a>
-        </div>
-        <div class="hero-brand">
-          <img class="brand-logo" src="../icons/logo.svg" width="40" height="40" alt="" />
-          <div>
-            <h1>YC Research Board</h1>
-            <p>Startup intelligence inbox — companies, founders, news, and adjacent ideas.</p>
-          </div>
-        </div>
-      </header>
-
-      <div class="connection-banner" id="connection-banner" hidden>
-        <span id="connection-banner-text">Backend unreachable. Sign in to sync research.</span>
-      </div>
-
-      <div class="stats" id="stats"></div>
-
-      <div class="toolbar">
-        <div class="filters" id="status-filters">
-          <button type="button" class="filter-btn active" data-status="">All</button>
-          <button type="button" class="filter-btn" data-status="processing">Processing</button>
-          <button type="button" class="filter-btn" data-status="processed">Processed</button>
-          <button type="button" class="filter-btn" data-status="needs_review">Needs review</button>
-          <button type="button" class="filter-btn" data-status="shortlisted">Shortlisted</button>
-          <button type="button" class="filter-btn" data-status="rejected">Rejected</button>
-        </div>
-        <button type="button" class="refresh-btn" id="refresh-btn">Refresh</button>
-      </div>
-
-      <div class="layout">
-        <section class="list-pane">
-          <div id="company-list" class="company-list">
-            <div class="empty">Loading…</div>
-          </div>
-        </section>
-
-        <section class="detail-pane" id="detail-pane">
-          <div class="empty">Select a company to view research.</div>
-        </section>
-      </div>
-    </main>
-
-    <div class="toast" id="toast"></div>
-    <script type="module" src="board.js"></script>
-  </body>
-</html>
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Recall — YC Research Board</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+    <link rel="stylesheet" href="../shared/app-shell.css" />
+    <link rel="stylesheet" href="board.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside id="app-sidebar-root"></aside>
+
+      <main class="page app-main">
+        <header class="hero">
+          <div class="hero-brand">
+            <img class="brand-logo" src="../icons/logo.svg" width="40" height="40" alt="" />
+            <div>
+              <h1>YC Research Board</h1>
+              <p>Startup intelligence inbox — companies, founders, news, and adjacent ideas.</p>
+            </div>
+          </div>
+        </header>
+
+        <div class="connection-banner" id="connection-banner" hidden>
+          <span id="connection-banner-text">Backend unreachable. Sign in to sync research.</span>
+        </div>
+
+        <div class="stats" id="stats"></div>
+
+        <div class="toolbar">
+          <div class="filters" id="status-filters">
+            <button type="button" class="filter-btn active" data-status="">All</button>
+            <button type="button" class="filter-btn" data-status="processing">Processing</button>
+            <button type="button" class="filter-btn" data-status="processed">Processed</button>
+            <button type="button" class="filter-btn" data-status="needs_review">Needs review</button>
+            <button type="button" class="filter-btn" data-status="shortlisted">Shortlisted</button>
+            <button type="button" class="filter-btn" data-status="rejected">Rejected</button>
+          </div>
+          <button type="button" class="refresh-btn" id="refresh-btn">Refresh</button>
+        </div>
+
+        <div class="layout">
+          <section class="list-pane">
+            <div id="company-list" class="company-list">
+              <div class="empty">Loading…</div>
+            </div>
+          </section>
+
+          <section class="detail-pane" id="detail-pane">
+            <div class="empty">Select a company to view research.</div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script type="module" src="board.js"></script>
+  </body>
+</html>

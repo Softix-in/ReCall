@@ -8,6 +8,7 @@ import {
   updateResearchCompany,
 } from '../shared/api.js';
 import { requireAuth } from '../shared/auth-gate.js';
+import { mountAppShell } from '../shared/app-shell.js';
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -313,11 +314,6 @@ async function loadCompanies() {
 }
 
 function bindEvents() {
-  $('#back-link').addEventListener('click', (event) => {
-    event.preventDefault();
-    window.close();
-  });
-
   $('#refresh-btn').addEventListener('click', async () => {
     try {
       await loadCompanies();
@@ -344,6 +340,8 @@ function bindEvents() {
 }
 
 async function start() {
+  mountAppShell({ active: 'research' });
+
   if (!(await requireAuth())) return;
 
   bindEvents();

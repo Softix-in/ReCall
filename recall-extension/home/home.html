@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Recall — Home</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+    <link rel="stylesheet" href="../shared/app-shell.css" />
+    <link rel="stylesheet" href="home.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside id="app-sidebar-root"></aside>
+
+      <main class="home-main app-main">
+        <header class="home-header">
+          <div>
+            <h1>Home</h1>
+            <p>Navigate your library, capture links, and jump into every Recall workspace.</p>
+          </div>
+          <div class="header-stats">
+            <div class="stat-chip">
+              <span class="stat-label">Items</span>
+              <strong id="item-count">—</strong>
+            </div>
+            <div class="stat-chip">
+              <span class="stat-label">Storage</span>
+              <strong id="storage-used">—</strong>
+            </div>
+          </div>
+        </header>
+
+        <section class="quick-row" aria-label="Quick actions">
+          <form class="quick-card" id="search-form">
+            <h2>Search library</h2>
+            <p class="hint">Find anything by meaning or keywords.</p>
+            <div class="inline-row">
+              <input type="search" id="home-search" placeholder="What are you looking for?" autocomplete="off" />
+              <button type="submit" class="btn-primary">Search</button>
+            </div>
+          </form>
+
+          <form class="quick-card" id="save-form">
+            <h2>Save a link</h2>
+            <p class="hint">Paste any URL — Recall will scrape and index it.</p>
+            <div class="inline-row">
+              <input type="url" id="home-url" placeholder="https://…" autocomplete="off" />
+              <button type="submit" class="btn-primary" id="save-link-btn">Save</button>
+            </div>
+            <p class="status-line" id="save-status"></p>
+          </form>
+        </section>
+
+        <section class="destinations" aria-label="Workspaces">
+          <h2 class="section-title">Workspaces</h2>
+          <div class="dest-grid">
+            <a class="dest-card" href="../search/search.html">
+              <span class="dest-icon">⌕</span>
+              <div>
+                <h3>Search</h3>
+                <p>Semantic and keyword search across your saved library.</p>
+              </div>
+            </a>
+            <a class="dest-card" href="../profile/profile.html">
+              <span class="dest-icon">◈</span>
+              <div>
+                <h3>Profile &amp; Career</h3>
+                <p>Identity, projects, resume, and AI career tools.</p>
+              </div>
+            </a>
+            <a class="dest-card" href="../research/board.html">
+              <span class="dest-icon">◎</span>
+              <div>
+                <h3>YC Research</h3>
+                <p>Startup intelligence board — companies, founders, and notes.</p>
+              </div>
+            </a>
+            <a class="dest-card" href="../settings/settings.html">
+              <span class="dest-icon">⚙</span>
+              <div>
+                <h3>Settings</h3>
+                <p>Account, AI models, backend connection, and backups.</p>
+              </div>
+            </a>
+            <button type="button" class="dest-card dest-card-btn" id="open-popup-hint">
+              <span class="dest-icon">↓</span>
+              <div>
+                <h3>Page capture</h3>
+                <p>Use the toolbar icon to capture the current tab, add notes, or extract knowledge.</p>
+              </div>
+            </button>
+          </div>
+        </section>
+
+        <section class="recent-section" aria-label="Recent items">
+          <div class="section-header">
+            <h2 class="section-title">Recent</h2>
+            <a class="text-link" href="../search/search.html">Open full search →</a>
+          </div>
+          <div class="recent-list" id="recent-list">
+            <div class="empty">Loading…</div>
+          </div>
+        </section>
+
+        <section class="shortcuts-section" aria-label="Keyboard shortcuts">
+          <h2 class="section-title">Shortcuts</h2>
+          <div class="shortcut-list">
+            <div class="shortcut-row">
+              <span>Quick save current page</span>
+              <kbd>Ctrl+Shift+S</kbd>
+            </div>
+            <div class="shortcut-row">
+              <span>Open search</span>
+              <kbd>Ctrl+Shift+F</kbd>
+            </div>
+            <div class="shortcut-row">
+              <span>Save highlight</span>
+              <kbd>Ctrl+Shift+H</kbd>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script type="module" src="home.js"></script>
+  </body>
+</html>

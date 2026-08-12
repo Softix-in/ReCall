@@ -16,6 +16,7 @@ import {
   updateItemTags,
 } from '../shared/api.js';
 import { requireAuth } from '../shared/auth-gate.js';
+import { mountAppShell } from '../shared/app-shell.js';
 import { createLiveSearchRunner } from '../shared/live-search.js';
 import {
   bindSearchCards,
@@ -416,12 +417,20 @@ async function loadJobHistory() {
 
 async function refreshFooter() {
   try {
-    const [healthResult, status] = await Promise.all([health(), getStatus()]);
-    $('#footer-status').textContent = healthResult.ok
-      ? `Daemon online · ${status.itemCount} items saved`
-      : 'Daemon online';
+    const healthResult = await health();
+    if (!healthResult?.ok) {
+      $('#footer-status').textContent = 'Daemon offline — backend unreachable';
+      return;
+    }
+
+    try {
+      const status = await getStatus();
+      $('#footer-status').textContent = `Daemon online · ${status.itemCount} items saved`;
+    } catch {
+      $('#footer-status').textContent = 'Daemon online';
+    }
   } catch {
-    $('#footer-status').textContent = 'Daemon offline — start the backend on port 7878';
+    $('#footer-status').textContent = 'Daemon offline — backend unreachable';
   }
 }
 
@@ -795,6 +804,8 @@ $('#export-md-btn').addEventListener('click', () => {
 // ── Initialise ───────────────────────────────────────────────────────────────
 
 async function start() {
+  mountAppShell({ active: 'search' });
+
   if (!(await requireAuth())) {
     return;
   }

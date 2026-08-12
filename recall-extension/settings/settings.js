@@ -11,14 +11,56 @@ import {
 } from '../shared/api.js';
 import { changeEmail, changePassword, getMe, getSession, isAuthenticated, logout, resendVerification } from '../shared/auth.js';
 import { getLoginUrl } from '../shared/auth-gate.js';
+import { mountAppShell } from '../shared/app-shell.js';
+import {
+  CHAT_MODELS,
+  CUSTOM_MODEL_VALUE,
+  DEFAULT_CHAT_MODEL,
+  DEFAULT_QUALITY_MODEL,
+  DEFAULT_REASONING_MODEL,
+  QUALITY_MODELS,
+  REASONING_MODELS,
+  fillModelSelect,
+  resolveSelectedModel,
+  syncCustomModelVisibility,
+} from '../shared/fireworks-models.js';
 
 const $ = (id) => document.getElementById(id);
+
+let syncQualityCustom = () => {};
+let syncChatCustom = () => {};
+let syncReasoningCustom = () => {};
+
+function bindModelSelect(selectId, customInputId, customWrapId) {
+  const selectEl = $(selectId);
+  const customInputEl = $(customInputId);
+  const wrapEl = $(customWrapId);
+
+  if (!selectEl) {
+    return () => {};
+  }
+
+  const sync = () => {
+    const isCustom = selectEl.value === CUSTOM_MODEL_VALUE;
+    if (wrapEl) wrapEl.hidden = !isCustom;
+    syncCustomModelVisibility(selectEl, customInputEl);
+  };
+
+  selectEl.addEventListener('change', sync);
+  return sync;
+}
+
+function initModelSelectors() {
+  syncQualityCustom = bindModelSelect('aiQualityModel', 'aiQualityModelCustom', 'aiQualityModelCustomWrap');
+  syncChatCustom = bindModelSelect('aiChatModel', 'aiChatModelCustom', 'aiChatModelCustomWrap');
+  syncReasoningCustom = bindModelSelect('aiReasoningModel', 'aiReasoningModelCustom', 'aiReasoningModelCustomWrap');
+}
 
 async function refreshAccountSection() {
   const signedIn = await isAuthenticated();
   const session = await getSession();
   let user = session.user;
-
+  
   if (signedIn) {
     try {
       user = await getMe();
@@ -29,6 +71,8 @@ async function refreshAccountSection() {
 
   if (signedIn && user?.email) {
     $('account-email').textContent = `Signed in as ${user.email}`;
+    $('account-status-pill').textContent = 'Signed in';
+    $('account-status-pill').classList.add('signed-in');
     $('sign-out-btn').hidden = false;
     $('open-login-btn').hidden = true;
     $('account-security').hidden = false;
@@ -54,6 +98,8 @@ async function refreshAccountSection() {
   }
 
   $('account-email').textContent = 'Not signed in';
+  $('account-status-pill').textContent = 'Not signed in';
+  $('account-status-pill').classList.remove('signed-in');
   $('sign-out-btn').hidden = true;
   $('open-login-btn').hidden = false;
   $('account-security').hidden = true;
@@ -63,13 +109,33 @@ async function loadAiSettings() {
   if (!(await isAuthenticated())) {
     $('aiStatus').textContent = 'Sign in to configure AI settings';
     $('aiStatus').style.color = '#fcd34d';
+    fillModelSelect($('aiQualityModel'), QUALITY_MODELS, DEFAULT_QUALITY_MODEL, DEFAULT_QUALITY_MODEL);
+    fillModelSelect($('aiChatModel'), CHAT_MODELS, DEFAULT_CHAT_MODEL, DEFAULT_CHAT_MODEL);
+    fillModelSelect($('aiReasoningModel'), REASONING_MODELS, DEFAULT_REASONING_MODEL, DEFAULT_REASONING_MODEL);
+    syncQualityCustom();
+    syncChatCustom();
+    syncReasoningCustom();
     return;
   }
 
   try {
     const { user_profile: profile } = await fetchProfile();
-    $('aiQualityModel').value = profile.ai_quality_model || '';
-    $('aiChatModel').value = profile.ai_chat_model || '';
+    const quality = profile.ai_quality_model || DEFAULT_QUALITY_MODEL;
+    const chat = profile.ai_chat_model || DEFAULT_CHAT_MODEL;
+    const reasoning = profile.ai_reasoning_model || DEFAULT_REASONING_MODEL;
+
+    fillModelSelect($('aiQualityModel'), QUALITY_MODELS, quality, DEFAULT_QUALITY_MODEL);
+    fillModelSelect($('aiChatModel'), CHAT_MODELS, chat, DEFAULT_CHAT_MODEL);
+    fillModelSelect($('aiReasoningModel'), REASONING_MODELS, reasoning, DEFAULT_REASONING_MODEL);
+
+    $('aiQualityModelCustom').value = QUALITY_MODELS.some((m) => m.id === quality) ? '' : quality;
+    $('aiChatModelCustom').value = CHAT_MODELS.some((m) => m.id === chat) ? '' : chat;
+    $('aiReasoningModelCustom').value = REASONING_MODELS.some((m) => m.id === reasoning) ? '' : reasoning;
+
+    syncQualityCustom();
+    syncChatCustom();
+    syncReasoningCustom();
+
     $('aiDeepAnalysis').checked = Boolean(profile.ai_deep_analysis_enabled);
     $('fireworksApiKey').placeholder = profile.has_fireworks_api_key
       ? 'Key saved (enter new key to replace)'
@@ -81,6 +147,9 @@ async function loadAiSettings() {
 }
 
 async function load() {
+  mountAppShell({ active: 'settings' });
+  initModelSelectors();
+
   const connection = await loadExtensionConfig();
   $('backendUrl').value = connection.backendUrl;
   await refreshAccountSection();
@@ -93,6 +162,8 @@ async function load() {
       // Session may be stale; account section still reflects storage.
     }
   }
+
+  await loadAiSettings();
 
   if (!(await isAuthenticated())) {
     $('status').textContent = 'Sign in to load server settings';
@@ -112,8 +183,6 @@ async function load() {
     $('status').textContent = `Backend settings unavailable: ${error.message}`;
     $('status').style.color = '#fcd34d';
   }
-
-  await loadAiSettings();
 }
 
 $('settings-form').addEventListener('submit', async (event) => {
@@ -240,15 +309,25 @@ $('saveAiSettings').addEventListener('click', async () => {
       payload.fireworks_api_key = fireworks_api_key;
     }
 
-    const qualityModel = $('aiQualityModel').value.trim();
-    if (qualityModel) {
-      payload.ai_quality_model = qualityModel;
-    }
+    const qualityModel = resolveSelectedModel(
+      $('aiQualityModel'),
+      $('aiQualityModelCustom'),
+      DEFAULT_QUALITY_MODEL,
+    );
+    const chatModel = resolveSelectedModel(
+      $('aiChatModel'),
+      $('aiChatModelCustom'),
+      DEFAULT_CHAT_MODEL,
+    );
+    const reasoningModel = resolveSelectedModel(
+      $('aiReasoningModel'),
+      $('aiReasoningModelCustom'),
+      DEFAULT_REASONING_MODEL,
+    );
 
-    const chatModel = $('aiChatModel').value.trim();
-    if (chatModel) {
-      payload.ai_chat_model = chatModel;
-    }
+    if (qualityModel) payload.ai_quality_model = qualityModel;
+    if (chatModel) payload.ai_chat_model = chatModel;
+    if (reasoningModel) payload.ai_reasoning_model = reasoningModel;
 
     await updateProfileAiSettings(payload);
     $('fireworksApiKey').value = '';
