@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: recall
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: recall
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U recall -d recall"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://recall:ci_only@localhost:5432/recall
+      AUTH_LEGACY_API_KEY: "false"
+      EMAIL_DEV_LOG: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            recall-embed/requirements.txt
+            recall-tray/requirements.txt
+
+      - name: Generate JWT keys
+        run: |
+          openssl genrsa -out jwt-private.pem 2048
+          openssl rsa -in jwt-private.pem -pubout -out jwt-public.pem
+          {
+            echo "JWT_PRIVATE_KEY<<EOF"
+            cat jwt-private.pem
+            echo "EOF"
+            echo "JWT_PUBLIC_KEY<<EOF"
+            cat jwt-public.pem
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+          shred -u jwt-private.pem jwt-public.pem 2>/dev/null || rm -f jwt-private.pem jwt-public.pem
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run URL classifier tests
+        working-directory: backend
+        run: npm run test:classify
+
+      - name: Run URL safety tests
+        working-directory: backend
+        run: npm run test:safe-url
+
+      - name: Install embed + tray dependencies
+        run: |
+          python -m pip install -r recall-embed/requirements.txt
+          python -m pip install transformers
+          python -m pip install -r recall-tray/requirements.txt
+
+      - name: Download ONNX model
+        run: python recall-embed/scripts/download_model.py
+
+      - name: Initialize database
+        working-directory: backend
+        run: npm run migrate
+
+      - name: Start backend
+        working-directory: backend
+        run: |
+          npm start > ../daemon-ci.log 2>&1 &
+          echo $! > ../daemon.pid
+
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:7878/health >/dev/null; then
+              echo "Backend ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend failed to start"
+          exit 1
+
+      - name: Run phase tests
+        working-directory: backend
+        run: |
+          npm run test:phase2-auth
+          npm run test:account-mgmt

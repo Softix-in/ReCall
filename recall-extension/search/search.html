@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Recall Search</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+    <link rel="stylesheet" href="../shared/app-shell.css" />
+    <link rel="stylesheet" href="search.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside id="app-sidebar-root"></aside>
+
+      <main class="page app-main">
+      <header class="hero">
+        <div class="hero-brand">
+          <img class="brand-logo" src="../icons/logo.svg" width="40" height="40" alt="" />
+          <div>
+            <h1>Recall Search</h1>
+            <p>Search your saved library by meaning or keywords.</p>
+          </div>
+        </div>
+      </header>
+
+      <form class="search-bar" id="search-form">
+        <input
+          id="search-input"
+          type="search"
+          placeholder="What are you looking for?"
+          autocomplete="off"
+          autofocus
+        />
+        <button type="submit">Search</button>
+      </form>
+
+      <div class="filters">
+        <select id="filter-type" aria-label="Source type">
+          <option value="">All types</option>
+          <option value="video">Video</option>
+          <option value="article">Article</option>
+          <option value="documentation">Documentation</option>
+          <option value="link">Link</option>
+          <option value="yc-startup">YC Startup</option>
+          <option value="audio">Audio</option>
+        </select>
+
+        <select id="filter-save-mode" aria-label="Save mode">
+          <option value="">Any save mode</option>
+          <option value="auto_scrape">Auto-scrape</option>
+          <option value="manual_note">Manual note</option>
+          <option value="doc_extract">Doc extract</option>
+        </select>
+
+        <select id="filter-since" aria-label="Date range">
+          <option value="">Any time</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="90d">Last 90 days</option>
+        </select>
+      </div>
+
+      <div class="meta" id="results-meta" hidden></div>
+
+      <section class="panel-section" id="recommendations-panel">
+        <div class="section-header-row">
+          <h2 class="section-title">Recommended for you</h2>
+          <button type="button" class="text-btn" id="clear-test-data-btn" hidden>Clear example data</button>
+        </div>
+        <p class="section-hint" id="recommendations-hint">Recent saves and suggested searches</p>
+        <div id="suggested-queries"></div>
+        <div id="recommended-items" class="results"></div>
+      </section>
+
+      <section class="panel-section" id="results-panel" hidden>
+        <h2 class="section-title">Results</h2>
+        <section class="results" id="results"></section>
+      </section>
+
+      <section class="panel-section" id="related-panel" hidden>
+        <h2 class="section-title">Related picks</h2>
+        <p class="section-hint">Similar to your top match</p>
+        <section class="results" id="related-results"></section>
+      </section>
+
+      <details class="history-panel" id="collections-panel">
+        <summary>Collections <span class="badge-small" id="collections-count"></span></summary>
+        <div id="collections-list" class="collections-grid"></div>
+      </details>
+
+      <details class="history-panel" id="ask-panel">
+        <summary>Ask your library <span class="badge-small ask-badge">AI · Ollama</span></summary>
+        <div id="ask-status-bar" class="ask-status-bar"></div>
+        <form id="ask-form" class="ask-form">
+          <input id="ask-input" type="text" placeholder="Ask anything about your saved items…" autocomplete="off" />
+          <button type="submit" id="ask-btn">Ask</button>
+        </form>
+        <div id="ask-result" class="ask-result" hidden></div>
+      </details>
+
+      <details class="history-panel" id="history-panel">
+        <summary>Job history (30 days)</summary>
+        <div id="job-history" class="history-list">Loading…</div>
+      </details>
+
+      <footer class="footer">
+        <span><span class="kbd">↑</span> <span class="kbd">↓</span> navigate · <span class="kbd">Enter</span> open · <span class="kbd">T</span> transcript</span>
+        <span id="footer-status">Checking daemon…</span>
+        <div class="footer-export">
+          <span class="footer-label">Export:</span>
+          <button type="button" class="text-btn" id="export-json-btn">JSON</button>
+          <button type="button" class="text-btn" id="export-md-btn">Markdown</button>
+        </div>
+      </footer>
+
+    </main>
+    </div>
+
+    <script type="module" src="search.js"></script>
+  </body>
+</html>

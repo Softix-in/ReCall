@@ -1,0 +1,65 @@
+{
+  "manifest_version": 3,
+  "name": "Recall",
+  "version": "0.8.3",
+  "description": "Save and search anything you read online — synced to your Recall library. Includes YC startup research.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "Recall"
+  },
+  "permissions": ["activeTab", "storage", "scripting", "commands", "tabs"],
+  "host_permissions": [
+    "http://localhost:7878/*",
+    "http://127.0.0.1:7878/*",
+    "*://*.ycombinator.com/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.ycombinator.com/*"],
+      "js": ["content/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "quick-save": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Quick-save current page to Recall"
+    },
+    "open-search": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+F",
+        "mac": "Command+Shift+F"
+      },
+      "description": "Open Recall search"
+    },
+    "save-highlight": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+H",
+        "mac": "Command+Shift+H"
+      },
+      "description": "Save selected text as a highlight note"
+    }
+  },
+  "options_page": "settings/settings.html"
+}

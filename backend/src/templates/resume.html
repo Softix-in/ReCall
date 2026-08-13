@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Resume</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 11pt;
+      line-height: 1.45;
+      color: #111;
+      padding: 36px 42px;
+    }
+    h1 {
+      font-size: 22pt;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      margin-bottom: 4px;
+    }
+    .headline {
+      font-size: 12pt;
+      color: #333;
+      margin-bottom: 6px;
+    }
+    .contact {
+      font-size: 10pt;
+      color: #444;
+      margin-bottom: 16px;
+    }
+    .section {
+      margin-top: 16px;
+    }
+    .section-title {
+      font-size: 11pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-bottom: 1px solid #222;
+      padding-bottom: 3px;
+      margin-bottom: 8px;
+    }
+    .summary {
+      font-size: 10.5pt;
+      color: #222;
+    }
+    .skills {
+      font-size: 10.5pt;
+    }
+    .entry {
+      margin-bottom: 10px;
+    }
+    .entry-header {
+      display: flex;
+      justify-content: space-between;
+      font-weight: 700;
+      font-size: 10.5pt;
+    }
+    .entry-sub {
+      font-style: italic;
+      font-size: 10pt;
+      color: #333;
+      margin-bottom: 4px;
+    }
+    ul {
+      margin-left: 18px;
+    }
+    li {
+      margin-bottom: 3px;
+      font-size: 10.5pt;
+    }
+    .edu-line, .cert-line {
+      font-size: 10.5pt;
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>{{DISPLAY_NAME}}</h1>
+  <div class="headline">{{HEADLINE}}</div>
+  <div class="contact">{{CONTACT}}</div>
+  {{SUMMARY_SECTION}}
+  {{SKILLS_SECTION}}
+  {{EXPERIENCE_SECTION}}
+  {{EDUCATION_SECTION}}
+  {{CERTIFICATIONS_SECTION}}
+</body>
+</html>

@@ -1,0 +1,106 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: recall
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: recall
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recall -d recall"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  embed:
+    build:
+      context: .
+      dockerfile: recall-embed/Dockerfile
+    restart: unless-stopped
+    environment:
+      RECALL_HOME: /data/recall
+      EMBED_HOST: 0.0.0.0
+      EMBED_PORT: 7879
+    volumes:
+      - recall-data:/data/recall
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7879/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embed:
+        condition: service_healthy
+    ports:
+      - "${RECALL_BIND:-127.0.0.1}:${RECALL_PORT:-7878}:7878"
+    environment:
+      RECALL_HOME: /data/recall
+      HOST: 0.0.0.0
+      PORT: 7878
+      NODE_OPTIONS: --max-old-space-size=1024
+      DATABASE_URL: postgresql://recall:${POSTGRES_PASSWORD:-changeme}@postgres:5432/recall
+      EMBED_HOST: embed
+      EMBED_PORT: 7879
+      EMBED_AUTO_START: "false"
+      RECALL_API_KEY: ${RECALL_API_KEY:-}
+      AUTH_LEGACY_API_KEY: ${AUTH_LEGACY_API_KEY:-false}
+      BOOTSTRAP_USER_EMAIL: ${BOOTSTRAP_USER_EMAIL:-bootstrap@recall.local}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+      RECALL_CORS_ORIGINS: ${RECALL_CORS_ORIGINS:-extension}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      AUTH_ALLOW_REGISTRATION: ${AUTH_ALLOW_REGISTRATION:-true}
+      FIREWORKS_ALLOW_SHARED_KEY: ${FIREWORKS_ALLOW_SHARED_KEY:-false}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:7878}
+      FIREWORKS_API_KEY: ${FIREWORKS_API_KEY:-}
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      FIRECRAWL_MAX_CRAWL_PAGES: ${FIRECRAWL_MAX_CRAWL_PAGES:-25}
+      DOC_EXTRACT_MIN_CLIENT_CHARS: ${DOC_EXTRACT_MIN_CLIENT_CHARS:-800}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      EMAIL_DEV_LOG: ${EMAIL_DEV_LOG:-false}
+      PYTHON_BIN: python3
+      YTDLP_BIN: yt-dlp
+    volumes:
+      - recall-data:/data/recall
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      RECALL_DOMAIN: ${RECALL_DOMAIN:-}
+      CADDY_EMAIL: ${CADDY_EMAIL:-}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  recall-data:
+  postgres-data:
+  caddy-data:
+  caddy-config:

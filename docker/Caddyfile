@@ -1,0 +1,15 @@
+{
+	email {$CADDY_EMAIL}
+}
+
+{$RECALL_DOMAIN} {
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+	reverse_proxy backend:7878
+}
