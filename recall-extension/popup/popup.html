@@ -120,9 +120,14 @@
           <input type="text" id="research-tags" placeholder="AI agents, India opportunity, too crowded" autocomplete="off" />
 
           <button class="btn btn-primary" id="research-btn" disabled>Research this startup</button>
-          <button class="btn btn-secondary" id="research-board-btn" type="button">Open research board ↗</button>
+          <p class="hint" id="research-ready-hint">Queued jobs keep running in the background. Switch companies and queue the next one.</p>
 
-          <p class="research-status" id="research-status" hidden></p>
+          <div class="research-queue" id="research-queue" hidden>
+            <h3 class="section-title">Research queue</h3>
+            <div id="research-queue-list"></div>
+          </div>
+
+          <button class="btn btn-secondary" id="research-board-btn" type="button">Open research board ↗</button>
         </div>
       </section>
 

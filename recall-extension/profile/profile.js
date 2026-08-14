@@ -1,6 +1,6 @@
 import { fetchProfile, health } from '../shared/api.js';
 import { mountAppShell } from '../shared/app-shell.js';
-import { requireAuth } from '../shared/auth-gate.js';
+import { ejectFullPageFromPopup, requireAuth } from '../shared/auth-gate.js';
 import { mountIdentityTab } from './sections/identity.js';
 import { mountProjectsTab } from './sections/projects.js';
 import { mountResumeTab } from './sections/resume.js';
@@ -127,6 +127,10 @@ function mountTabs() {
 }
 
 async function init() {
+  if (ejectFullPageFromPopup()) {
+    return;
+  }
+
   mountAppShell({ active: 'profile' });
 
   if (!(await requireAuth())) {

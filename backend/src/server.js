@@ -31,7 +31,7 @@ const { logDaemon } = require('./utils/logger');
 const { startEmbedService, stopEmbedService } = require('./services/embed-launcher');
 const embedClient = require('./services/embed-client');
 const { corsMiddleware, authMiddleware, securityHeaders } = require('./middleware/security');
-const { apiRateLimiter, authRateLimiter } = require('./middleware/rate-limit');
+const { apiRateLimiter, authRateLimiter, refreshRateLimiter } = require('./middleware/rate-limit');
 const { createEmailVerifiedMiddleware } = require('./middleware/email-verified');
 const { sendError } = require('./utils/http-error');
 
@@ -274,7 +274,7 @@ async function bootstrap() {
   const authRouter = createAuthRouter();
   app.post('/auth/register', authRateLimiter);
   app.post('/auth/login', authRateLimiter);
-  app.post('/auth/refresh', authRateLimiter);
+  app.post('/auth/refresh', refreshRateLimiter);
   app.post('/auth/forgot-password', authRateLimiter);
   app.use('/auth', authRouter);
 

@@ -1,5 +1,5 @@
 const bcrypt = require('bcrypt');
-const { query, withUserContext } = require('./pg-pool');
+const { query, withSecurityBypass } = require('./pg-pool');
 const {
   generateRefreshToken,
   generateRefreshFamilyId,
@@ -104,55 +104,88 @@ async function findRefreshToken(refreshToken) {
   return result.rows[0] || null;
 }
 
-async function findRefreshTokenAny(refreshToken) {
-  const tokenHash = hashRefreshToken(refreshToken);
-  const result = await query(
-    `SELECT * FROM refresh_tokens WHERE token_hash = $1`,
-    [tokenHash],
-  );
-
-  return result.rows[0] || null;
-}
-
 async function revokeRefreshToken(refreshToken) {
   const tokenHash = hashRefreshToken(refreshToken);
   await query('UPDATE refresh_tokens SET revoked = true WHERE token_hash = $1', [tokenHash]);
 }
 
-async function revokeRefreshFamily(familyId) {
-  if (!familyId) {
-    return;
-  }
-
-  await query(
-    'UPDATE refresh_tokens SET revoked = true WHERE family_id = $1 AND revoked = false',
-    [familyId],
-  );
-}
-
 async function rotateRefreshToken(oldToken, device = 'api') {
-  const existing = await findRefreshToken(oldToken);
+  const tokenHash = hashRefreshToken(oldToken);
+  const reuseGraceMs = 30_000;
 
-  if (!existing) {
-    const reused = await findRefreshTokenAny(oldToken);
-    if (reused?.family_id) {
-      await revokeRefreshFamily(reused.family_id);
+  const result = await withSecurityBypass(async (client) => {
+    const found = await client.query(
+      `SELECT rt.*, u.email
+       FROM refresh_tokens rt
+       JOIN users u ON u.id = rt.user_id
+       WHERE rt.token_hash = $1
+       FOR UPDATE OF rt`,
+      [tokenHash],
+    );
+
+    const existing = found.rows[0];
+    const usable = existing
+      && !existing.revoked
+      && Number(existing.expires_at) > Date.now();
+
+    if (!usable) {
+      if (existing?.family_id) {
+        const successor = await client.query(
+          `SELECT created_at
+           FROM refresh_tokens
+           WHERE family_id = $1
+             AND revoked = false
+             AND expires_at > $2
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [existing.family_id, Date.now()],
+        );
+        const createdAt = successor.rows[0] ? Number(successor.rows[0].created_at) : 0;
+        const recentlyRotated = createdAt > 0 && Date.now() - createdAt < reuseGraceMs;
+
+        if (!recentlyRotated) {
+          await client.query(
+            'UPDATE refresh_tokens SET revoked = true WHERE family_id = $1 AND revoked = false',
+            [existing.family_id],
+          );
+        }
+      }
+
+      return { ok: false };
     }
 
+    await client.query(
+      'UPDATE refresh_tokens SET revoked = true WHERE token_hash = $1',
+      [tokenHash],
+    );
+
+    const newToken = generateRefreshToken();
+    const family = existing.family_id || generateRefreshFamilyId();
+
+    await client.query(
+      `INSERT INTO refresh_tokens (user_id, token_hash, device, created_at, expires_at, revoked, family_id)
+       VALUES ($1, $2, $3, $4, $5, false, $6)`,
+      [existing.user_id, hashRefreshToken(newToken), device, Date.now(), getRefreshTokenExpiry(), family],
+    );
+
+    return {
+      ok: true,
+      userId: existing.user_id,
+      email: existing.email,
+      refreshToken: newToken,
+    };
+  });
+
+  if (!result?.ok) {
     const error = new Error('Invalid or expired refresh token');
     error.status = 401;
     throw error;
   }
 
-  await revokeRefreshToken(oldToken);
-
-  const newToken = generateRefreshToken();
-  await storeRefreshToken(existing.user_id, newToken, device, existing.family_id);
-
   return {
-    userId: existing.user_id,
-    email: existing.email,
-    refreshToken: newToken,
+    userId: result.userId,
+    email: result.email,
+    refreshToken: result.refreshToken,
   };
 }
 

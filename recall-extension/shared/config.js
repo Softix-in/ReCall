@@ -19,8 +19,7 @@ function isLocalBackendUrl(url) {
 export function resolveBackendUrl(storedUrl) {
   const cleaned = storedUrl ? storedUrl.replace(/\/$/, '') : '';
 
-  // Prefer hosted builtin over a stale local URL left in chrome.storage.
-  if (HOSTED_BACKEND_URL && (!cleaned || isLocalBackendUrl(cleaned))) {
+  if (HOSTED_BACKEND_URL && isStaleBackendUrl(cleaned)) {
     return HOSTED_BACKEND_URL;
   }
 
@@ -31,13 +30,55 @@ export function resolveBackendUrl(storedUrl) {
   return LOCAL_API_BASE;
 }
 
+function isStaleBackendUrl(url) {
+  if (!url) {
+    return true;
+  }
+
+  if (isLocalBackendUrl(url)) {
+    return Boolean(HOSTED_BACKEND_URL);
+  }
+
+  try {
+    const parsed = new URL(url);
+
+    // Old public HTTP on 7878 is closed; the hosted API is HTTPS on 443.
+    if (parsed.protocol === 'http:' && parsed.port === '7878') {
+      return Boolean(HOSTED_BACKEND_URL);
+    }
+
+    if (HOSTED_BACKEND_URL) {
+      const hosted = new URL(HOSTED_BACKEND_URL);
+      if (parsed.hostname === hosted.hostname && parsed.protocol !== hosted.protocol) {
+        return true;
+      }
+    }
+  } catch {
+    return true;
+  }
+
+  return false;
+}
+
 export async function getBackendBase() {
   if (typeof chrome === 'undefined' || !chrome.storage?.local) {
     return resolveBackendUrl('');
   }
 
   const stored = await chrome.storage.local.get([STORAGE_KEY_BACKEND_URL]);
-  return resolveBackendUrl(stored[STORAGE_KEY_BACKEND_URL]);
+  const resolved = resolveBackendUrl(stored[STORAGE_KEY_BACKEND_URL]);
+  const current = stored[STORAGE_KEY_BACKEND_URL]
+    ? String(stored[STORAGE_KEY_BACKEND_URL]).replace(/\/$/, '')
+    : '';
+
+  if (resolved && current !== resolved) {
+    await chrome.storage.local.set({
+      [STORAGE_KEY_BACKEND_URL]: resolved,
+      recallDefaultsSeeded: true,
+    });
+  }
+
+  return resolved;
 }
 
 export async function getExtensionConfig() {
@@ -58,8 +99,7 @@ export async function ensureDefaultConnection() {
     ? String(stored[STORAGE_KEY_BACKEND_URL]).replace(/\/$/, '')
     : '';
 
-  // Seed hosted URL, and migrate any leftover local backend URL.
-  if (!current || isLocalBackendUrl(current)) {
+  if (isStaleBackendUrl(current)) {
     await chrome.storage.local.set({
       [STORAGE_KEY_BACKEND_URL]: HOSTED_BACKEND_URL,
       recallDefaultsSeeded: true,

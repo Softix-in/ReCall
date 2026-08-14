@@ -10,7 +10,7 @@ import {
   updateSettings,
 } from '../shared/api.js';
 import { changeEmail, changePassword, getMe, getSession, isAuthenticated, logout, resendVerification } from '../shared/auth.js';
-import { getLoginUrl } from '../shared/auth-gate.js';
+import { ejectFullPageFromPopup, openLoginPage } from '../shared/auth-gate.js';
 import { mountAppShell } from '../shared/app-shell.js';
 import {
   CHAT_MODELS,
@@ -105,6 +105,10 @@ async function loadAiSettings() {
 }
 
 async function load() {
+  if (ejectFullPageFromPopup()) {
+    return;
+  }
+
   mountAppShell({ active: 'settings' });
 
   const connection = await loadExtensionConfig();
@@ -185,11 +189,11 @@ $('settings-form').addEventListener('submit', async (event) => {
 
 $('sign-out-btn').addEventListener('click', async () => {
   await logout();
-  window.location.replace(getLoginUrl());
+  openLoginPage();
 });
 
 $('open-login-btn').addEventListener('click', () => {
-  window.location.replace(getLoginUrl());
+  openLoginPage();
 });
 
 $('resend-verification-btn').addEventListener('click', async () => {

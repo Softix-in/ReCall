@@ -1,5 +1,6 @@
 import { health } from './api.js';
 import { getSession } from './auth.js';
+import { isCrampedExtensionWindow, openExtensionTab } from './auth-gate.js';
 
 const NAV_ITEMS = [
   { id: 'home', label: 'Home', icon: '⌂', path: 'home/home.html' },
@@ -73,6 +74,18 @@ export function mountAppShell({ active, subtitle } = {}) {
       <p id="app-user-email" class="user-email">Not signed in</p>
     </div>
   `;
+
+  root.querySelectorAll('a[data-nav]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      if (!isCrampedExtensionWindow()) {
+        return;
+      }
+
+      event.preventDefault();
+      openExtensionTab(link.href);
+      window.close();
+    });
+  });
 
   refreshAppShellStatus().catch(() => {});
 }

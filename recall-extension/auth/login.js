@@ -1,5 +1,5 @@
 import { forgotPassword, login, register } from '../shared/auth.js';
-import { openSettingsPage, redirectIfAuthenticated } from '../shared/auth-gate.js';
+import { continueAfterLogin, openSettingsPage, redirectIfAuthenticated } from '../shared/auth-gate.js';
 import { getBackendBase } from '../shared/config.js';
 import { ensureBackendHostPermission } from '../shared/permissions.js';
 
@@ -131,7 +131,7 @@ $('auth-form').addEventListener('submit', async (event) => {
     }
 
     await login(email, password);
-    window.location.replace(chrome.runtime.getURL('home/home.html'));
+    continueAfterLogin();
   } catch (error) {
     showError(error.message || 'Authentication failed');
   } finally {

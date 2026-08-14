@@ -2,7 +2,6 @@ import {
   AuthError,
   clearSession,
   ensureValidAccessToken,
-  getAuthHeaders,
   isAuthError,
   refreshTokens,
 } from './auth.js';
@@ -73,15 +72,12 @@ async function request(path, options = {}, { retryOn401 = true } = {}) {
   const { signal, skipAuth = false, ...fetchOptions } = options;
   const base = await getBackendBase();
   const needsAuth = !skipAuth && !isPublicPath(path);
-
-  if (needsAuth) {
-    await ensureValidAccessToken();
-  }
+  const accessToken = needsAuth ? await ensureValidAccessToken() : null;
 
   const headers = {
     Accept: 'application/json',
     ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-    ...(needsAuth ? await getAuthHeaders() : {}),
+    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     ...options.headers,
   };
 
@@ -96,7 +92,10 @@ async function request(path, options = {}, { retryOn401 = true } = {}) {
   if (response.status === 401 && needsAuth && retryOn401) {
     try {
       await refreshTokens();
-    } catch {
+    } catch (error) {
+      if (error?.status === 429 || error?.code === 'rate_limited') {
+        throw error;
+      }
       await clearSession();
       throw new AuthError('Session expired — sign in again', { status: 401, code: 'auth_required' });
     }
@@ -113,14 +112,14 @@ async function request(path, options = {}, { retryOn401 = true } = {}) {
 
 async function authenticatedFetch(path, options = {}, { retryOn401 = true } = {}) {
   const base = await getBackendBase();
-  await ensureValidAccessToken();
+  const accessToken = await ensureValidAccessToken();
 
   const response = await fetch(`${base}${path}`, {
     ...options,
     headers: {
       Accept: options.headers?.Accept || 'application/json',
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(await getAuthHeaders()),
+      Authorization: `Bearer ${accessToken}`,
       ...options.headers,
     },
   });
@@ -128,7 +127,10 @@ async function authenticatedFetch(path, options = {}, { retryOn401 = true } = {}
   if (response.status === 401 && retryOn401) {
     try {
       await refreshTokens();
-    } catch {
+    } catch (error) {
+      if (error?.status === 429 || error?.code === 'rate_limited') {
+        throw error;
+      }
       await clearSession();
       throw new AuthError('Session expired — sign in again', { status: 401, code: 'auth_required' });
     }

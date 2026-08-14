@@ -11,9 +11,15 @@ import {
   retryItem,
   startDocCrawl,
 } from '../shared/api.js';
-import { isAuthenticated } from '../shared/auth.js';
+import { isAuthenticated, isRefreshBackoffActive, refreshTokens } from '../shared/auth.js';
 import { getLoginUrl } from '../shared/auth-gate.js';
 import { ensureCaptureHostPermission } from '../shared/permissions.js';
+import {
+  addResearchJob,
+  isResearchTerminal,
+  readResearchQueue,
+  syncResearchJobFromRemote,
+} from '../shared/research-queue.js';
 
 const POLL_INTERVAL_MS = 5000;
 const STORAGE_KEY = 'recallJobQueue';
@@ -309,12 +315,34 @@ async function startYcResearch({ extracted = null, note = null, tags = [] } = {}
     extracted: data,
   });
 
+  await addResearchJob({
+    id: result.research_job_id,
+    companyId: result.company_id,
+    name: data.company_name || 'Startup',
+    url: data.yc_url || data.url,
+    status: result.status || 'queued',
+  });
+  ensurePolling();
+  chrome.runtime.sendMessage({ type: 'RESEARCH_QUEUE_UPDATED' }).catch(() => {});
+
   return result;
 }
 
+function isPollAuthFailure(error) {
+  return isAuthError(error)
+    || error?.status === 429
+    || error?.code === 'rate_limited'
+    || error?.code === 'auth_required';
+}
+
 async function pollQueue() {
+  if (!(await isAuthenticated()) || await isRefreshBackoffActive()) {
+    return;
+  }
+
   const queue = await readQueue();
   let changed = false;
+  let pauseAuth = false;
   const now = Date.now();
   const nextQueue = [];
 
@@ -330,6 +358,11 @@ async function pollQueue() {
         changed = true;
         continue;
       }
+      nextQueue.push(job);
+      continue;
+    }
+
+    if (pauseAuth) {
       nextQueue.push(job);
       continue;
     }
@@ -357,8 +390,11 @@ async function pollQueue() {
 
       nextQueue.push(job);
     } catch (error) {
-      if (isAuthError(error)) {
-        notifyAuthRequired();
+      if (isPollAuthFailure(error)) {
+        if (isAuthError(error) || error?.code === 'auth_required') {
+          notifyAuthRequired();
+        }
+        pauseAuth = true;
       }
 
       nextQueue.push(job);
@@ -370,7 +406,57 @@ async function pollQueue() {
     chrome.runtime.sendMessage({ type: 'QUEUE_UPDATED' }).catch(() => {});
   }
 
+  if (!pauseAuth) {
+    await pollResearchQueue();
+  }
   await updateBadge();
+}
+
+async function pollResearchQueue() {
+  if (!(await isAuthenticated()) || await isRefreshBackoffActive()) {
+    return;
+  }
+
+  const queue = await readResearchQueue();
+  const active = queue.filter((job) => !isResearchTerminal(job.status));
+  if (active.length === 0) {
+    return;
+  }
+
+  let changed = false;
+
+  for (const job of active) {
+    try {
+      const data = await getResearchJob(job.id);
+      const remote = data?.job;
+      if (!remote) {
+        continue;
+      }
+
+      const companyName = data?.company?.company_name;
+      if (companyName) {
+        remote.company_name = companyName;
+      }
+
+      const before = `${job.status}|${job.step}|${job.error || ''}`;
+      await syncResearchJobFromRemote(job.id, remote);
+      const after = `${remote.status}|${remote.progress?.step || remote.status}|${remote.error_message || ''}`;
+      if (before !== after) {
+        changed = true;
+      }
+    } catch (error) {
+      if (isPollAuthFailure(error)) {
+        if (isAuthError(error) || error?.code === 'auth_required') {
+          notifyAuthRequired();
+        }
+        return;
+      }
+    }
+  }
+
+  if (changed) {
+    chrome.runtime.sendMessage({ type: 'RESEARCH_QUEUE_UPDATED' }).catch(() => {});
+  }
 }
 
 function ensurePolling() {
@@ -387,8 +473,15 @@ function ensurePolling() {
 
 async function updateBadge() {
   const queue = await readQueue();
-  const active = queue.filter((job) => job.processing === 'queued' || job.processing === 'processing');
-  const failed = queue.filter((job) => job.processing === 'failed');
+  const researchQueue = await readResearchQueue();
+  const active = [
+    ...queue.filter((job) => job.processing === 'queued' || job.processing === 'processing'),
+    ...researchQueue.filter((job) => !isResearchTerminal(job.status)),
+  ];
+  const failed = [
+    ...queue.filter((job) => job.processing === 'failed'),
+    ...researchQueue.filter((job) => job.status === 'failed'),
+  ];
 
   if (failed.length > 0) {
     await chrome.action.setBadgeBackgroundColor({ color: '#dc2626' });
@@ -414,11 +507,22 @@ async function checkDaemonHealth() {
   }
 }
 
-async function getFooterStatus() {
+async function getFooterStatus({ includeStats = true } = {}) {
   const healthResult = await checkDaemonHealth();
 
   if (!healthResult.online) {
     return { online: false, itemCount: 0, storageBytes: 0, queueLength: 0 };
+  }
+
+  const skipStats = !includeStats
+    || !(await isAuthenticated())
+    || await isRefreshBackoffActive();
+
+  if (skipStats) {
+    return {
+      online: true,
+      version: healthResult.version,
+    };
   }
 
   try {
@@ -430,8 +534,11 @@ async function getFooterStatus() {
       queueLength: status.queueLength,
       version: healthResult.version,
     };
-  } catch {
-    // Backend is up; /status requires auth so unsigned users still show online.
+  } catch (error) {
+    if (isPollAuthFailure(error) && (isAuthError(error) || error?.code === 'auth_required')) {
+      notifyAuthRequired();
+    }
+
     return {
       online: true,
       itemCount: 0,
@@ -443,6 +550,12 @@ async function getFooterStatus() {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.remove([
+    'recallRefreshBackoffUntil',
+    'recallRefreshLock',
+    'recallRefreshLockUntil',
+  ]).catch(() => {});
+
   ensureDefaultConnection()
     .catch(() => {})
     .finally(() => {
@@ -531,6 +644,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     try {
       switch (message.type) {
+        case 'REFRESH_SESSION': {
+          const session = await refreshTokens();
+          sendResponse({
+            ok: true,
+            session: {
+              accessToken: session.accessToken,
+              refreshToken: session.refreshToken,
+              user: session.user,
+              expiresAt: session.expiresAt,
+            },
+          });
+          break;
+        }
         case 'SCRAPE_ACTIVE_TAB': {
           const data = await scrapeActiveTab();
           sendResponse({ ok: true, data });
@@ -591,6 +717,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           sendResponse({ ok: true, result: data });
           break;
         }
+        case 'GET_RESEARCH_QUEUE': {
+          await pollResearchQueue();
+          const queue = await readResearchQueue();
+          sendResponse({ ok: true, queue });
+          break;
+        }
         case 'GET_QUEUE': {
           const queue = await pruneQueue();
           sendResponse({ ok: true, queue });
@@ -602,7 +734,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         }
         case 'GET_FOOTER_STATUS': {
-          const status = await getFooterStatus();
+          const status = await getFooterStatus({
+            includeStats: message.includeStats !== false,
+          });
           sendResponse({ ok: true, status });
           break;
         }
@@ -633,6 +767,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         ok: false,
         error: error.message,
         status: error.status,
+        code: error.code,
         data: error.data,
         authRequired,
       });

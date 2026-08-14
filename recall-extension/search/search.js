@@ -15,7 +15,7 @@ import {
   search,
   updateItemTags,
 } from '../shared/api.js';
-import { requireAuth } from '../shared/auth-gate.js';
+import { ejectFullPageFromPopup, requireAuth } from '../shared/auth-gate.js';
 import { mountAppShell } from '../shared/app-shell.js';
 import { createLiveSearchRunner } from '../shared/live-search.js';
 import {
@@ -806,6 +806,10 @@ $('#export-md-btn').addEventListener('click', () => {
 // ── Initialise ───────────────────────────────────────────────────────────────
 
 async function start() {
+  if (ejectFullPageFromPopup()) {
+    return;
+  }
+
   mountAppShell({ active: 'search' });
 
   if (!(await requireAuth())) {

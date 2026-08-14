@@ -2,18 +2,24 @@ import {
   clearTestData,
   deleteItem,
   getFailedJobs,
-  getResearchJob,
   getSearchRecommendations,
   isAuthError,
   researchStartup,
   retryItem,
   search,
 } from '../shared/api.js';
-import { getLoginUrl, requireAuth } from '../shared/auth-gate.js';
+import { openLoginPage, requireAuth } from '../shared/auth-gate.js';
 import { getSession } from '../shared/auth.js';
 import { ensureCaptureHostPermission } from '../shared/permissions.js';
 import { createLiveSearchRunner } from '../shared/live-search.js';
 import { bindSuggestionChips, renderSuggestionChips } from '../shared/search-render.js';
+import {
+  addResearchJob,
+  findActiveResearchJob,
+  formatResearchProgress,
+  isResearchTerminal,
+  readResearchQueue,
+} from '../shared/research-queue.js';
 import {
   formatBytes,
   formatTimeAgo,
@@ -34,7 +40,6 @@ const state = {
   lastCaptureId: null,
   recentRequestId: 0,
   ycExtracted: null,
-  researchJobId: null,
   researchPollTimer: null,
   crawlJobId: null,
   crawlPollTimer: null,
@@ -74,6 +79,7 @@ function setActiveTab(tabName) {
 
   if (tabName === 'research') {
     loadYcResearchPanel();
+    refreshResearchQueue();
   }
 }
 
@@ -293,8 +299,8 @@ async function refreshUserEmail() {
   }
 }
 
-async function refreshFooter() {
-  const response = await sendMessage({ type: 'GET_FOOTER_STATUS' });
+async function refreshFooter({ includeStats = true } = {}) {
+  const response = await sendMessage({ type: 'GET_FOOTER_STATUS', includeStats });
 
   if (!response?.ok) {
     $('#daemon-dot').classList.remove('online');
@@ -305,8 +311,10 @@ async function refreshFooter() {
   const { online, itemCount, storageBytes } = response.status;
   $('#daemon-dot').classList.toggle('online', online);
   $('#daemon-label').textContent = online ? 'Daemon online' : 'Daemon offline';
-  $('#item-count').textContent = String(itemCount ?? 0);
-  $('#storage-used').textContent = formatBytes(storageBytes);
+  if (includeStats && itemCount != null) {
+    $('#item-count').textContent = String(itemCount ?? 0);
+    $('#storage-used').textContent = formatBytes(storageBytes);
+  }
 }
 
 function renderRecentItemRow(item, { searching = false } = {}) {
@@ -691,72 +699,62 @@ function stopResearchPolling() {
   }
 }
 
-function formatResearchProgress(job) {
-  const step = job?.progress?.step || job?.status || 'queued';
-  const labels = {
-    starting: 'Starting…',
-    website_crawl: 'Crawling company website…',
-    founder_enrichment: 'Enriching founders…',
-    ai_analysis: 'Running AI analysis…',
-    news_signals: 'Extracting news signals…',
-    embedding: 'Embedding for search…',
-    done: 'Done',
-    queued: 'Queued…',
-    running: 'Running…',
-    completed: 'Completed',
-    failed: 'Failed',
-    needs_review: 'Needs review',
-  };
-
-  let text = labels[step] || labels[job?.status] || String(step);
-
-  if (job?.progress?.pages_crawled != null) {
-    text += ` · ${job.progress.pages_crawled} page(s)`;
-  }
-  if (job?.progress?.founder_sources != null) {
-    text += ` · ${job.progress.founder_sources} founder source(s)`;
-  }
-  if (job?.progress?.ai_skipped) {
-    text += ' · AI skipped (add Fireworks API key)';
-  }
-  if (job?.error_message) {
-    text += ` — ${job.error_message}`;
+function renderResearchQueue(queue) {
+  const wrap = $('#research-queue');
+  const list = $('#research-queue-list');
+  if (!wrap || !list) {
+    return;
   }
 
-  return text;
-}
+  if (!queue?.length) {
+    wrap.hidden = true;
+    list.innerHTML = '';
+    stopResearchPolling();
+    return;
+  }
 
-async function pollResearchJob() {
-  if (!state.researchJobId) return;
+  wrap.hidden = false;
+  list.innerHTML = queue.slice(0, 8).map((job) => `
+    <div class="research-queue-item ${escapeHtml(job.status || 'queued')}">
+      <strong>${escapeHtml(job.name || 'Startup')}</strong>
+      <span>${escapeHtml(formatResearchProgress(job))}</span>
+    </div>
+  `).join('');
 
-  try {
-    const data = await getResearchJob(state.researchJobId);
-    const job = data?.job;
-    if (!job) return;
-
-    const statusEl = $('#research-status');
-    statusEl.hidden = false;
-    statusEl.className = `research-status ${job.status}`;
-    statusEl.textContent = formatResearchProgress(job);
-
-    if (['completed', 'failed', 'needs_review'].includes(job.status)) {
-      stopResearchPolling();
-    }
-  } catch (error) {
-    if (isAuthError(error)) {
-      stopResearchPolling();
-      window.location.replace(getLoginUrl());
-    }
+  const hasActive = queue.some((job) => !isResearchTerminal(job.status));
+  if (hasActive) {
+    startResearchPolling();
+  } else {
+    stopResearchPolling();
   }
 }
 
-function startResearchPolling(jobId) {
-  stopResearchPolling();
-  state.researchJobId = jobId;
-  pollResearchJob();
+async function refreshResearchQueue() {
+  const response = await sendMessage({ type: 'GET_RESEARCH_QUEUE' });
+  const queue = response?.ok ? response.queue : await readResearchQueue();
+  renderResearchQueue(queue);
+  return queue;
+}
+
+function startResearchPolling() {
+  if (state.researchPollTimer) {
+    return;
+  }
+
   state.researchPollTimer = setInterval(() => {
-    pollResearchJob().catch(() => {});
+    refreshResearchQueue().catch(() => {});
   }, 3000);
+}
+
+function resetResearchForm() {
+  const note = $('#research-note');
+  const tags = $('#research-tags');
+  if (note) note.value = '';
+  if (tags) tags.value = '';
+}
+
+function openResearchBoard() {
+  chrome.tabs.create({ url: chrome.runtime.getURL('research/board.html') });
 }
 
 function bindEvents() {
@@ -801,7 +799,7 @@ function bindEvents() {
     $('#quick-save-btn').disabled = false;
 
     if (response?.authRequired) {
-      window.location.replace(getLoginUrl());
+      openLoginPage();
       return;
     }
 
@@ -830,7 +828,7 @@ function bindEvents() {
     $('#extract-knowledge-btn').disabled = false;
 
     if (response?.authRequired) {
-      window.location.replace(getLoginUrl());
+      openLoginPage();
       return;
     }
 
@@ -857,7 +855,7 @@ function bindEvents() {
     const response = await sendMessage({ type: 'SAVE_WITH_NOTE', note });
 
     if (response?.authRequired) {
-      window.location.replace(getLoginUrl());
+      openLoginPage();
       return;
     }
 
@@ -926,7 +924,7 @@ function bindEvents() {
       });
 
       if (response?.authRequired) {
-        window.location.replace(getLoginUrl());
+        openLoginPage();
         return;
       }
 
@@ -960,9 +958,7 @@ function bindEvents() {
 
   $('#recent-search').addEventListener('input', scheduleRecentSearch);
 
-  $('#research-board-btn').addEventListener('click', () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL('research/board.html') });
-  });
+  $('#research-board-btn').addEventListener('click', openResearchBoard);
 
   $('#research-btn').addEventListener('click', async () => {
     const btn = $('#research-btn');
@@ -978,20 +974,41 @@ function bindEvents() {
         state.ycExtracted = extracted;
       }
 
+      const triggerUrl = extracted.yc_url || extracted.website || extracted.url;
+      const queue = await readResearchQueue();
+      const already = findActiveResearchJob(queue, {
+        url: triggerUrl,
+      });
+
+      if (already) {
+        showToast('Already in queue — open the next company');
+        await refreshResearchQueue();
+        return;
+      }
+
       const result = await researchStartup({
-        trigger_url: extracted.yc_url || extracted.website || extracted.url,
+        trigger_url: triggerUrl,
         trigger_type: extracted.page_type === 'yc_company' ? 'yc_company_page' : 'company_website',
         note: note || null,
         tags,
         extracted,
       });
 
-      showToast(`Research queued · ${result.founders_count || 0} founder(s)`);
-      startResearchPolling(result.research_job_id);
+      await addResearchJob({
+        id: result.research_job_id,
+        companyId: result.company_id,
+        name: extracted.company_name || 'Startup',
+        url: triggerUrl,
+        status: result.status || 'queued',
+      });
+
+      resetResearchForm();
+      showToast(`Queued ${extracted.company_name || 'startup'} · ready for the next one`);
+      await refreshResearchQueue();
       await refreshFooter();
     } catch (error) {
       if (isAuthError(error)) {
-        window.location.replace(getLoginUrl());
+        openLoginPage();
         return;
       }
       showToast(error.message || 'Research failed', 'error');
@@ -1006,9 +1023,13 @@ function bindEvents() {
       refreshFooter();
     }
 
+    if (message.type === 'RESEARCH_QUEUE_UPDATED') {
+      refreshResearchQueue();
+    }
+
     if (message.type === 'AUTH_REQUIRED') {
       showToast('Session expired — sign in again', 'error');
-      window.location.replace(getLoginUrl());
+      openLoginPage();
     }
   });
 }
@@ -1024,13 +1045,13 @@ async function start() {
   loadActiveTabScrape();
   await sendMessage({ type: 'PRUNE_QUEUE' });
   await refreshQueueStatus();
-  await refreshFooter();
+  await refreshResearchQueue();
+  await refreshFooter({ includeStats: true });
   await loadFailedJobs();
 
   setInterval(() => {
     refreshQueueStatus();
-    refreshFooter();
-    loadFailedJobs();
+    refreshFooter({ includeStats: false });
   }, 5000);
 }
 

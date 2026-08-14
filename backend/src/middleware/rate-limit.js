@@ -7,6 +7,7 @@ const apiRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip),
+  skip: (req) => req.path === '/health' || req.path.startsWith('/auth/'),
   message: { error: 'Too many requests, please try again later.' },
 });
 
@@ -19,7 +20,18 @@ const authRateLimiter = rateLimit({
   message: { error: 'Too many authentication attempts, please try again later.' },
 });
 
+const refreshRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  skipFailedRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
+  message: { error: 'Too many token refresh attempts, please try again later.' },
+});
+
 module.exports = {
   apiRateLimiter,
   authRateLimiter,
+  refreshRateLimiter,
 };

@@ -2,12 +2,11 @@ import {
   getResearchCompany,
   getResearchStats,
   health,
-  isAuthError,
   listResearchCompanies,
   reanalyzeResearchCompany,
   updateResearchCompany,
 } from '../shared/api.js';
-import { requireAuth } from '../shared/auth-gate.js';
+import { ejectFullPageFromPopup, requireAuth } from '../shared/auth-gate.js';
 import { mountAppShell } from '../shared/app-shell.js';
 
 const $ = (selector) => document.querySelector(selector);
@@ -360,6 +359,8 @@ function bindEvents() {
 }
 
 async function start() {
+  if (ejectFullPageFromPopup()) return;
+
   mountAppShell({ active: 'research' });
 
   if (!(await requireAuth())) return;
@@ -377,9 +378,14 @@ async function start() {
     await getResearchStats();
     await loadCompanies();
   } catch (error) {
-    if (isAuthError(error)) return;
-    $('#company-list').innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
-    showToast(error.message, 'error');
+    const message = error?.status === 429 || error?.code === 'rate_limited'
+      ? 'Session refresh delayed. Wait a moment, then reload.'
+      : (error.message || 'Could not load research.');
+    $('#company-list').innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+    showToast(message, 'error');
+    if (error?.status === 401 || error?.code === 'auth_required') {
+      return;
+    }
   }
 }
 

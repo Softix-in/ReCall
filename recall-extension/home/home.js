@@ -1,6 +1,6 @@
 import { getItems, getStatus, health, isAuthError, saveLink } from '../shared/api.js';
 import { mountAppShell, refreshAppShellStatus } from '../shared/app-shell.js';
-import { getLoginUrl, requireAuth } from '../shared/auth-gate.js';
+import { ejectFullPageFromPopup, isCrampedExtensionWindow, openExtensionTab, openLoginPage, requireAuth } from '../shared/auth-gate.js';
 import {
   formatBytes,
   formatTimeAgo,
@@ -107,6 +107,10 @@ function bindEvents() {
     if (query) {
       url.searchParams.set('q', query);
     }
+    if (isCrampedExtensionWindow()) {
+      openExtensionTab(url.href);
+      return;
+    }
     window.location.href = url.href;
   });
 
@@ -149,7 +153,7 @@ function bindEvents() {
       await loadRecent();
     } catch (error) {
       if (isAuthError(error)) {
-        window.location.replace(getLoginUrl());
+        openLoginPage();
         return;
       }
 
@@ -164,9 +168,25 @@ function bindEvents() {
   $('open-popup-hint').addEventListener('click', () => {
     showToast('Click the Recall icon in your browser toolbar to capture the current page');
   });
+
+  document.querySelectorAll('a.dest-card').forEach((card) => {
+    card.addEventListener('click', (event) => {
+      if (!isCrampedExtensionWindow()) {
+        return;
+      }
+
+      event.preventDefault();
+      openExtensionTab(new URL(card.getAttribute('href'), window.location.href).href);
+      window.close();
+    });
+  });
 }
 
 async function init() {
+  if (ejectFullPageFromPopup({ openTab: false })) {
+    return;
+  }
+
   mountAppShell({ active: 'home' });
   bindEvents();
 

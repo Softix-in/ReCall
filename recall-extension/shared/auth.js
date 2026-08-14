@@ -8,7 +8,9 @@ export const AUTH_STORAGE_KEYS = {
 };
 
 const DEVICE = 'chrome-extension';
-const REFRESH_BUFFER_SEC = 60;
+const REFRESH_LOCK_KEY = 'recallRefreshLock';
+const REFRESH_BACKOFF_KEY = 'recallRefreshBackoffUntil';
+const REFRESH_LOCK_MS = 10_000;
 
 export class AuthError extends Error {
   constructor(message, { status, code } = {}) {
@@ -92,6 +94,7 @@ async function writeSession({ access_token, refresh_token, user }) {
 
   if (typeof chrome !== 'undefined' && chrome.storage?.local) {
     await chrome.storage.local.set(payload);
+    await chrome.storage.local.remove([REFRESH_LOCK_KEY, REFRESH_BACKOFF_KEY]);
   }
 
   notifyAuthStateChanged();
@@ -100,7 +103,10 @@ async function writeSession({ access_token, refresh_token, user }) {
 
 export async function clearSession() {
   if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-    await chrome.storage.local.remove(Object.values(AUTH_STORAGE_KEYS));
+    await chrome.storage.local.remove([
+      ...Object.values(AUTH_STORAGE_KEYS),
+      REFRESH_LOCK_KEY,
+    ]);
   }
 
   notifyAuthStateChanged();
@@ -130,12 +136,57 @@ function isAccessTokenValid(accessToken, expiresAt) {
   return exp - Math.floor(Date.now() / 1000) > 0;
 }
 
-function shouldRefreshSoon(expiresAt) {
-  if (!expiresAt) {
-    return false;
-  }
+function toPublicSession(session) {
+  return {
+    accessToken: session.accessToken,
+    refreshToken: session.refreshToken,
+    user: session.user,
+    expiresAt: session.tokenExpiresAt ?? session.expiresAt ?? null,
+  };
+}
 
-  return expiresAt - Math.floor(Date.now() / 1000) < REFRESH_BUFFER_SEC;
+async function readValidSession() {
+  const session = await readAuthStorage();
+  if (session.accessToken && isAccessTokenValid(session.accessToken, session.tokenExpiresAt)) {
+    return toPublicSession(session);
+  }
+  return null;
+}
+
+function isServiceWorkerContext() {
+  return typeof ServiceWorkerGlobalScope !== 'undefined'
+    && typeof self !== 'undefined'
+    && self instanceof ServiceWorkerGlobalScope;
+}
+
+async function wait(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getBackoffUntil() {
+  if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+    return 0;
+  }
+  const stored = await chrome.storage.local.get(REFRESH_BACKOFF_KEY);
+  return Number(stored[REFRESH_BACKOFF_KEY] || 0);
+}
+
+export async function isRefreshBackoffActive() {
+  return Date.now() < await getBackoffUntil();
+}
+
+async function setRefreshBackoff(ms) {
+  if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+    return;
+  }
+  await chrome.storage.local.set({ [REFRESH_BACKOFF_KEY]: Date.now() + ms });
+}
+
+function rateLimitedError() {
+  return new AuthError('Session refresh delayed — wait a moment and reload', {
+    status: 429,
+    code: 'rate_limited',
+  });
 }
 
 export async function isAuthenticated() {
@@ -268,26 +319,169 @@ export async function changeEmail(newEmail, currentPassword) {
   return data;
 }
 
+async function acquireRefreshLock() {
+  if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+    return { owner: null };
+  }
+
+  const owner = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const valid = await readValidSession();
+    if (valid) {
+      return { owner: null, session: valid };
+    }
+
+    const stored = await chrome.storage.local.get(REFRESH_LOCK_KEY);
+    const lock = stored[REFRESH_LOCK_KEY];
+    const until = Number(lock?.until || 0);
+
+    if (until > Date.now() && lock?.owner && lock.owner !== owner) {
+      await wait(Math.min(until - Date.now() + 20, 400));
+      continue;
+    }
+
+    await chrome.storage.local.set({
+      [REFRESH_LOCK_KEY]: { owner, until: Date.now() + REFRESH_LOCK_MS },
+    });
+
+    const check = await chrome.storage.local.get(REFRESH_LOCK_KEY);
+    if (check[REFRESH_LOCK_KEY]?.owner === owner) {
+      return { owner };
+    }
+
+    await wait(40 + Math.random() * 80);
+  }
+
+  return { owner };
+}
+
+async function releaseRefreshLock(lock) {
+  if (!lock?.owner || typeof chrome === 'undefined' || !chrome.storage?.local) {
+    return;
+  }
+
+  const stored = await chrome.storage.local.get(REFRESH_LOCK_KEY);
+  if (stored[REFRESH_LOCK_KEY]?.owner === lock.owner) {
+    await chrome.storage.local.remove(REFRESH_LOCK_KEY);
+  }
+}
+
+async function refreshViaServiceWorker() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'REFRESH_SESSION' });
+
+    if (response?.ok) {
+      if (response.session?.accessToken) {
+        return toPublicSession(response.session);
+      }
+
+      const valid = await readValidSession();
+      if (valid) {
+        return valid;
+      }
+    }
+
+    if (response && response.ok === false) {
+      throw new AuthError(response.error || 'Session expired — sign in again', {
+        status: response.status || 401,
+        code: response.code || 'auth_required',
+      });
+    }
+  } catch (error) {
+    if (error instanceof AuthError) {
+      throw error;
+    }
+  }
+
+  return refreshInThisContext();
+}
+
+async function refreshInThisContext() {
+  const existing = await readValidSession();
+  if (existing) {
+    return existing;
+  }
+
+  if (await isRefreshBackoffActive()) {
+    throw rateLimitedError();
+  }
+
+  const lock = await acquireRefreshLock();
+  if (lock.session) {
+    return lock.session;
+  }
+
+  try {
+    const afterLock = await readValidSession();
+    if (afterLock) {
+      return afterLock;
+    }
+
+    const session = await readAuthStorage();
+    if (!session.refreshToken) {
+      throw new AuthError('Sign in required', { status: 401, code: 'auth_required' });
+    }
+
+    try {
+      const data = await authRequest('/auth/refresh', {
+        body: {
+          refresh_token: session.refreshToken,
+          device: DEVICE,
+        },
+      });
+      return writeSession(data);
+    } catch (error) {
+      if (error?.status === 429) {
+        await setRefreshBackoff(60_000);
+        throw rateLimitedError();
+      }
+
+      if (error?.status === 401) {
+        await wait(150);
+        const sibling = await readValidSession();
+        if (sibling) {
+          return sibling;
+        }
+
+        await clearSession();
+        throw new AuthError('Session expired — sign in again', {
+          status: 401,
+          code: 'auth_required',
+        });
+      }
+
+      throw error;
+    }
+  } finally {
+    await releaseRefreshLock(lock);
+  }
+}
+
 export async function refreshTokens() {
   if (refreshPromise) {
     return refreshPromise;
   }
 
   refreshPromise = (async () => {
-    const session = await readAuthStorage();
-
-    if (!session.refreshToken) {
-      throw new AuthError('No refresh token available', { status: 401, code: 'no_refresh_token' });
+    const existing = await readValidSession();
+    if (existing) {
+      return existing;
     }
 
-    const data = await authRequest('/auth/refresh', {
-      body: {
-        refresh_token: session.refreshToken,
-        device: DEVICE,
-      },
-    });
+    if (await isRefreshBackoffActive()) {
+      throw rateLimitedError();
+    }
 
-    return writeSession(data);
+    if (
+      !isServiceWorkerContext()
+      && typeof chrome !== 'undefined'
+      && chrome.runtime?.sendMessage
+    ) {
+      return refreshViaServiceWorker();
+    }
+
+    return refreshInThisContext();
   })();
 
   try {
@@ -300,11 +494,7 @@ export async function refreshTokens() {
 export async function ensureValidAccessToken() {
   const session = await readAuthStorage();
 
-  if (
-    session.accessToken
-    && isAccessTokenValid(session.accessToken, session.tokenExpiresAt)
-    && !shouldRefreshSoon(session.tokenExpiresAt)
-  ) {
+  if (session.accessToken && isAccessTokenValid(session.accessToken, session.tokenExpiresAt)) {
     return session.accessToken;
   }
 
@@ -368,5 +558,8 @@ export async function logout() {
 }
 
 export function isAuthError(error) {
-  return error instanceof AuthError || error?.name === 'AuthError';
+  if (!(error instanceof AuthError || error?.name === 'AuthError')) {
+    return false;
+  }
+  return error.status !== 429 && error.code !== 'rate_limited';
 }
